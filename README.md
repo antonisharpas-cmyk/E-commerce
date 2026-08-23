@@ -12,8 +12,15 @@ Not affiliated with or endorsed by the shop — this is an unsolicited proposal.
 
 ```bash
 npm install      # once
-npm run dev      # http://localhost:5173
+npm run dev      # Vite on :5173 + the checkout API on :3001
 ```
+
+`npm run dev` starts the front end and the payment API together. Open
+http://localhost:5173.
+
+Card payments need Viva.com credentials — see **[PAYMENTS.md](PAYMENTS.md)**.
+Without them the site still runs and cash-on-delivery / reserve-in-shop work
+end to end; only card checkout returns a clean "provider unavailable" error.
 
 For the meeting, build a static copy you can open without a server or Wi-Fi:
 
@@ -37,12 +44,18 @@ and drop `base: './'` from `vite.config.js`.
 | Product | `/product/:id` | Size & flavour pickers, per-serving macros, quantity, stock urgency, related products |
 | Brands | `/brands` | All 12 brands, each linking into a filtered shop view |
 | Contact | `/contact` | Address, WhatsApp, hours, embedded map, contact form |
+| Checkout | `/checkout` | Four fulfilment options, server-priced summary, VAT line |
+| Order | `/order/FM-XXXXXX` | Live order status: paid, placed, declined, cancelled |
 
 Plus a slide-in cart with a free-delivery progress meter, and a full **EN / ΕΛ
 toggle** on every string (top-right of the header).
 
 Cart contents and language choice persist in `localStorage`, so the demo
 survives a page refresh mid-meeting.
+
+**Payments are real** (in sandbox): card via Viva.com Smart Checkout with Apple
+Pay and Google Pay, plus cash on delivery and reserve-online-pay-in-shop.
+Read [PAYMENTS.md](PAYMENTS.md) before demoing the card flow.
 
 ---
 
@@ -108,9 +121,12 @@ already renders an `<img>` when it finds one.
   €35, Activlab Machine Man €30). Everything else is a realistic placeholder —
   don't quote them as his.
 - Opening hours in `src/lib/shop.js` are assumed, not confirmed. Ask him.
-- Checkout, accounts, wishlists and real payment are not built. The cart runs
-  to a "demo store" confirmation. That's the next phase, and it's worth being
-  upfront that it is.
+- Checkout and payment **are** built and work against Viva's sandbox. Accounts,
+  wishlists, refunds, real stock control and an admin order screen are not —
+  see the "deliberately not built" section of PAYMENTS.md and quote those as
+  phase two rather than letting him assume they're there.
+- The footer's terms / returns / privacy links are placeholders. He cannot take
+  real money without real ones.
 - The map is an OpenStreetMap embed pinned near Meneou, not a surveyed
   coordinate. Get the exact pin from him.
 
@@ -118,6 +134,20 @@ already renders an `<img>` when it finds one.
 
 ## Stack
 
-Vite 8 · React 19 · Tailwind CSS 4 · React Router 7. No UI library, no icon
-package, no external assets beyond Google Fonts (Anton + Inter) — and it
-degrades to system fonts if there's no internet in the room.
+Vite 8 · React 19 · Tailwind CSS 4 · React Router 7 · Vercel serverless
+functions · Viva.com Smart Checkout. No UI library, no icon package, no ORM, no
+external assets beyond Google Fonts (Anton + Inter) — and it degrades to system
+fonts if there's no internet in the room.
+
+```
+src/lib/pricing.js     money, VAT, delivery rules — imported by BOTH the
+                       browser and the API, so totals can never disagree
+api/checkout.js        prices the basket server-side, creates the Viva order
+api/return.js          verifies the payment against Viva's API
+api/webhook.js         catches payments where the customer closed the tab
+api/quote.js           prices a basket without creating anything
+server/dev.js          runs the same handlers locally, no Vercel login needed
+scripts/test-checkout.mjs   45 assertions incl. price-tampering and forged webhooks
+```
+
+Run `npm run test:checkout` with the API up to verify all of it.

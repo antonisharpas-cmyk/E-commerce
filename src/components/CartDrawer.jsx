@@ -1,24 +1,27 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { FREE_DELIVERY_AT, useCart } from '../lib/cart'
-import { money, useI18n } from '../lib/i18n'
+import { Link, useNavigate } from 'react-router-dom'
+import { useCart } from '../lib/cart'
+import { FREE_DELIVERY_AT, formatCents } from '../lib/pricing'
+import { useI18n } from '../lib/i18n'
 import ProductArt from './ProductArt'
-import { IconCheck, IconTruck, IconX } from './Icons'
+import { IconTruck, IconX } from './Icons'
 import { btn } from './ui'
 
 export default function CartDrawer() {
   const cart = useCart()
-  const { t } = useI18n()
-  const [done, setDone] = useState(false)
+  const { t, lang } = useI18n()
+  const nav = useNavigate()
 
   if (!cart.open) return null
 
-  const remaining = Math.max(0, FREE_DELIVERY_AT - cart.subtotal)
-  const progress = Math.min(100, (cart.subtotal / FREE_DELIVERY_AT) * 100)
+  const fmt = (c) => formatCents(c, lang === 'el' ? 'el-GR' : 'en-GB')
+  const remaining = Math.max(0, FREE_DELIVERY_AT - cart.itemsCents)
+  const progress = Math.min(100, (cart.itemsCents / FREE_DELIVERY_AT) * 100)
 
-  const close = () => {
-    cart.setOpen(false)
-    setDone(false)
+  const close = () => cart.setOpen(false)
+
+  const goToCheckout = () => {
+    close()
+    nav('/checkout')
   }
 
   return (
@@ -28,8 +31,7 @@ export default function CartDrawer() {
       <aside className="absolute inset-y-0 right-0 flex w-full max-w-[420px] flex-col border-l border-line bg-ink-2">
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <h2 className="text-[20px]">
-            {t('cart.title')}{' '}
-            {cart.count > 0 && <span className="text-brand">({cart.count})</span>}
+            {t('cart.title')} {cart.count > 0 && <span className="text-brand">({cart.count})</span>}
           </h2>
           <button
             type="button"
@@ -41,13 +43,12 @@ export default function CartDrawer() {
           </button>
         </div>
 
-        {/* free-delivery meter */}
         {cart.count > 0 && (
           <div className="border-b border-line px-5 py-3.5">
             <p className="flex items-center gap-2 text-[12px] font-semibold">
               <IconTruck width={16} height={16} className={remaining ? 'text-muted' : 'text-brand'} />
               {remaining > 0 ? (
-                <span className="text-muted">{t('cart.freeAt', { n: remaining.toFixed(2) })}</span>
+                <span className="text-muted">{t('cart.freeAt', { n: (remaining / 100).toFixed(2) })}</span>
               ) : (
                 <span className="text-brand">{t('cart.freeYes')}</span>
               )}
@@ -61,17 +62,8 @@ export default function CartDrawer() {
           </div>
         )}
 
-        {/* lines */}
         <div className="flex-1 overflow-y-auto">
-          {done ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center">
-              <span className="grid h-16 w-16 place-items-center rounded-full bg-brand text-ink">
-                <IconCheck width={30} height={30} />
-              </span>
-              <p className="display text-[22px]">{t('contact.form.sent')}</p>
-              <p className="text-[13px] text-muted">{t('cart.demo')}</p>
-            </div>
-          ) : cart.lines.length === 0 ? (
+          {cart.lines.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-5 px-8 text-center">
               <p className="text-[14px] text-muted">{t('cart.empty')}</p>
               <Link to="/shop" onClick={close} className={btn.primary}>
@@ -114,7 +106,9 @@ export default function CartDrawer() {
                           +
                         </button>
                       </div>
-                      <span className="display text-[16px] text-gold">{money(l.product.price * l.qty)}</span>
+                      <span className="display text-[16px] text-gold">
+                        {fmt(Math.round(l.product.price * 100) * l.qty)}
+                      </span>
                     </div>
                   </div>
                   <button
@@ -132,36 +126,28 @@ export default function CartDrawer() {
           )}
         </div>
 
-        {/* totals */}
-        {cart.lines.length > 0 && !done && (
+        {cart.lines.length > 0 && (
           <div className="border-t border-line px-5 py-4">
             <dl className="space-y-1.5 text-[13px]">
               <div className="flex justify-between">
                 <dt className="text-muted">{t('cart.subtotal')}</dt>
-                <dd className="font-semibold">{money(cart.subtotal)}</dd>
+                <dd className="font-semibold">{fmt(cart.itemsCents)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-muted">{t('cart.shipping')}</dt>
-                <dd className={cart.delivery === 0 ? 'font-semibold text-brand' : 'font-semibold'}>
-                  {cart.delivery === 0 ? t('cart.free') : money(cart.delivery)}
+                <dd className={cart.deliveryCents === 0 ? 'font-semibold text-brand' : 'font-semibold'}>
+                  {cart.deliveryCents === 0 ? t('cart.free') : fmt(cart.deliveryCents)}
                 </dd>
               </div>
               <div className="flex items-end justify-between border-t border-line pt-2.5">
                 <dt className="text-[11px] font-bold tracking-[0.2em] uppercase">{t('cart.total')}</dt>
-                <dd className="display text-[26px] text-gold">{money(cart.total)}</dd>
+                <dd className="display text-[26px] text-gold">{fmt(cart.totalCents)}</dd>
               </div>
             </dl>
-            <button
-              type="button"
-              onClick={() => {
-                setDone(true)
-                cart.clear()
-              }}
-              className={`${btn.primary} mt-4 w-full`}
-            >
+            <button type="button" onClick={goToCheckout} className={`${btn.primary} mt-4 w-full`}>
               {t('cart.checkout')}
             </button>
-            <p className="mt-2.5 text-center text-[10.5px] text-muted">{t('cart.demo')}</p>
+            <p className="mt-2.5 text-center text-[10.5px] text-muted">{t('cart.estimate')}</p>
           </div>
         )}
       </aside>

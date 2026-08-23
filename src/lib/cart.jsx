@@ -1,8 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useState } from 'react'
 import { bySlug } from './catalog'
+import { MAX_QTY_PER_LINE, quote } from './pricing'
 
-export const FREE_DELIVERY_AT = 50
-export const DELIVERY_FEE = 4.5
+/* The cart holds WHAT was ordered. Every money figure comes from quote() in
+   pricing.js — the same function the API uses — so the drawer, the checkout
+   page and the amount charged can never disagree. */
 
 const CartContext = createContext(null)
 
@@ -14,12 +16,18 @@ function reducer(state, action) {
       const { id, size, flavour, qty = 1 } = action
       const key = lineKey(id, size, flavour)
       const existing = state.find((l) => l.key === key)
-      if (existing) return state.map((l) => (l.key === key ? { ...l, qty: Math.min(l.qty + qty, 20) } : l))
-      return [...state, { key, id, size, flavour, qty }]
+      if (existing) {
+        return state.map((l) =>
+          l.key === key ? { ...l, qty: Math.min(l.qty + qty, MAX_QTY_PER_LINE) } : l,
+        )
+      }
+      return [...state, { key, id, size, flavour, qty: Math.min(qty, MAX_QTY_PER_LINE) }]
     }
     case 'setQty':
       return state
-        .map((l) => (l.key === action.key ? { ...l, qty: Math.max(0, Math.min(action.qty, 20)) } : l))
+        .map((l) =>
+          l.key === action.key ? { ...l, qty: Math.max(0, Math.min(action.qty, MAX_QTY_PER_LINE)) } : l,
+        )
         .filter((l) => l.qty > 0)
     case 'remove':
       return state.filter((l) => l.key !== action.key)
@@ -30,10 +38,12 @@ function reducer(state, action) {
   }
 }
 
-const readStored = () => {
+function readStored() {
   try {
     const raw = localStorage.getItem('fm-cart')
-    return raw ? JSON.parse(raw) : []
+    const parsed = raw ? JSON.parse(raw) : []
+    // drop anything that no longer exists in the catalogue
+    return Array.isArray(parsed) ? parsed.filter((l) => l?.id && bySlug(l.id)) : []
   } catch {
     return []
   }
@@ -47,11 +57,10 @@ export function CartProvider({ children }) {
     try {
       localStorage.setItem('fm-cart', JSON.stringify(lines))
     } catch {
-      /* ignore */
+      /* private mode — cart just won't survive a refresh */
     }
   }, [lines])
 
-  // lock scroll while the drawer is open
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : ''
     return () => {
@@ -60,18 +69,26 @@ export function CartProvider({ children }) {
   }, [open])
 
   const value = useMemo(() => {
-    const detailed = lines
-      .map((l) => ({ ...l, product: bySlug(l.id) }))
-      .filter((l) => l.product)
-    const subtotal = detailed.reduce((s, l) => s + l.product.price * l.qty, 0)
-    const count = detailed.reduce((s, l) => s + l.qty, 0)
-    const delivery = subtotal === 0 || subtotal >= FREE_DELIVERY_AT ? 0 : DELIVERY_FEE
+    const detailed = lines.map((l) => ({ ...l, product: bySlug(l.id) })).filter((l) => l.product)
+
+    /** Price the cart for a given fulfilment method. Returns null when empty. */
+    const priceFor = (fulfilment = 'delivery') => {
+      if (detailed.length === 0) return null
+      const result = quote(detailed, fulfilment)
+      return result.ok ? result.quote : null
+    }
+
+    const estimate = priceFor('delivery')
+
     return {
       lines: detailed,
-      count,
-      subtotal,
-      delivery,
-      total: subtotal + delivery,
+      count: detailed.reduce((s, l) => s + l.qty, 0),
+      /* estimate assumes courier delivery — the checkout page re-prices once a
+         fulfilment method is picked */
+      itemsCents: estimate?.itemsCents ?? 0,
+      deliveryCents: estimate?.deliveryCents ?? 0,
+      totalCents: estimate?.totalCents ?? 0,
+      priceFor,
       open,
       setOpen,
       add: (id, opts = {}) => {
@@ -96,3 +113,5 @@ export function useCart() {
   if (!ctx) throw new Error('useCart must be used inside <CartProvider>')
   return ctx
 }
+
+export { FREE_DELIVERY_AT } from './pricing'

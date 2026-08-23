@@ -8,6 +8,8 @@ import Shop from './pages/Shop'
 import Product from './pages/Product'
 import Brands from './pages/Brands'
 import Contact from './pages/Contact'
+import Checkout from './pages/Checkout'
+import OrderStatus from './pages/OrderStatus'
 import { useI18n } from './lib/i18n'
 import { btn } from './components/ui'
 
@@ -44,6 +46,8 @@ export default function App() {
           <Route path="/product/:id" element={<Product />} />
           <Route path="/brands" element={<Brands />} />
           <Route path="/contact" element={<Contact />} />
+          <Route path="/checkout" element={<Checkout />} />
+          <Route path="/order/:ref" element={<OrderStatus />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

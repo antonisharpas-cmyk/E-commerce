@@ -153,6 +153,161 @@ const DICT = {
   'cart.freeYes': { en: 'Free delivery unlocked', el: 'Δωρεάν αποστολή ενεργή' },
   'cart.demo': { en: 'Demo store — no real payment is taken.', el: 'Demo κατάστημα — δεν γίνεται πραγματική πληρωμή.' },
 
+  // --- checkout -----------------------------------------------------------
+  'cart.estimate': {
+    en: 'Delivery is confirmed at checkout.',
+    el: 'Η αποστολή επιβεβαιώνεται στο ταμείο.',
+  },
+  'checkout.step': { en: 'Checkout', el: 'Ολοκλήρωση παραγγελίας' },
+  'checkout.title': { en: 'Almost yours', el: 'Λίγο έμεινε' },
+  'checkout.how': { en: 'How do you want it?', el: 'Πώς θα το παραλάβεις;' },
+  'checkout.contact': { en: 'Your details', el: 'Τα στοιχεία σου' },
+  'checkout.address': { en: 'Delivery address', el: 'Διεύθυνση αποστολής' },
+  'checkout.summary': { en: 'Order summary', el: 'Σύνοψη παραγγελίας' },
+  'checkout.name': { en: 'Full name', el: 'Ονοματεπώνυμο' },
+  'checkout.email': { en: 'Email', el: 'Email' },
+  'checkout.phone': { en: 'Mobile', el: 'Κινητό' },
+  'checkout.street': { en: 'Street and number', el: 'Οδός και αριθμός' },
+  'checkout.city': { en: 'Town', el: 'Πόλη' },
+  'checkout.postcode': { en: 'Postcode', el: 'Ταχ. κώδικας' },
+  'checkout.notes': { en: 'Notes for us (optional)', el: 'Σημειώσεις (προαιρετικά)' },
+  'checkout.notesHint': {
+    en: 'Buzzer, landmark, best time to deliver…',
+    el: 'Κουδούνι, σημείο αναφοράς, καλύτερη ώρα παράδοσης…',
+  },
+  'checkout.collectAt': { en: 'Collect from', el: 'Παραλαβή από' },
+  'checkout.codFee': { en: 'Cash-on-delivery fee', el: 'Χρέωση αντικαταβολής' },
+  'checkout.vatIncl': { en: 'of which VAT ({rate}%)', el: 'από τα οποία ΦΠΑ ({rate}%)' },
+  'checkout.pay': { en: 'Pay', el: 'Πληρωμή' },
+  'checkout.place': { en: 'Place order', el: 'Καταχώρηση παραγγελίας' },
+  'checkout.working': { en: 'One moment…', el: 'Μια στιγμή…' },
+  'checkout.trust.viva': {
+    en: 'Card handled by Viva.com — we never see your card',
+    el: 'Η κάρτα διεκπεραιώνεται από τη Viva.com — δεν βλέπουμε τα στοιχεία σου',
+  },
+  'checkout.pciNote': {
+    en: 'You will be taken to Viva.com to pay, then brought straight back here. Apple Pay and Google Pay are available on supported devices.',
+    el: 'Θα μεταφερθείς στη Viva.com για την πληρωμή και θα επιστρέψεις αμέσως εδώ. Apple Pay και Google Pay είναι διαθέσιμα σε συμβατές συσκευές.',
+  },
+  'checkout.sandbox.title': { en: 'Sandbox mode — no money moves', el: 'Δοκιμαστική λειτουργία — καμία πραγματική πληρωμή' },
+  'checkout.sandbox.body': {
+    en: 'This is connected to the Viva.com demo environment. Pay with the test card below to walk the whole flow safely.',
+    el: 'Συνδεδεμένο με το demo περιβάλλον της Viva.com. Χρησιμοποίησε την παρακάτω δοκιμαστική κάρτα.',
+  },
+  'checkout.field.required': { en: 'Required', el: 'Απαιτείται' },
+  'checkout.field.invalid': { en: "That doesn't look right", el: 'Μη έγκυρη τιμή' },
+  'checkout.err.fields': { en: 'Please check the highlighted fields.', el: 'Έλεγξε τα επισημασμένα πεδία.' },
+  'checkout.err.network': {
+    en: 'Could not reach the shop. Check your connection and try again.',
+    el: 'Δεν ήταν δυνατή η σύνδεση. Δοκίμασε ξανά.',
+  },
+  'checkout.err.provider': {
+    en: 'The payment provider is not responding. Nothing was charged — try again in a moment or call us.',
+    el: 'Ο πάροχος πληρωμών δεν απαντά. Δεν χρεώθηκε τίποτα — δοκίμασε ξανά ή τηλεφώνησέ μας.',
+  },
+  'checkout.err.rate': { en: 'Too many attempts. Wait a minute and try again.', el: 'Πολλές προσπάθειες. Περίμενε ένα λεπτό.' },
+  'checkout.err.stock': {
+    en: 'One of those just sold out in that quantity. Adjust the cart and retry.',
+    el: 'Η ποσότητα δεν είναι πλέον διαθέσιμη. Τροποποίησε το καλάθι.',
+  },
+  'checkout.err.generic': {
+    en: 'Something went wrong and nothing was charged. Please try again.',
+    el: 'Κάτι πήγε λάθος και δεν χρεώθηκε τίποτα. Δοκίμασε ξανά.',
+  },
+
+  // --- fulfilment methods -------------------------------------------------
+  'ful.freeTag': { en: 'No fee', el: 'Χωρίς χρέωση' },
+  'ful.shipTag': { en: 'Free over €50', el: 'Δωρεάν άνω των €50' },
+  'ful.delivery.t': { en: 'Deliver to me', el: 'Αποστολή σε μένα' },
+  'ful.delivery.d': {
+    en: 'Pay by card now. Courier anywhere in Cyprus in 1–2 days.',
+    el: 'Πληρωμή με κάρτα τώρα. Αποστολή σε όλη την Κύπρο σε 1–2 ημέρες.',
+  },
+  'ful.pickup_paid.t': { en: 'Pay now, collect', el: 'Πληρωμή τώρα, παραλαβή' },
+  'ful.pickup_paid.d': {
+    en: 'Pay by card now and pick it up in Meneou — ready the same afternoon.',
+    el: 'Πληρωμή με κάρτα τώρα και παραλαβή από το Μενεού — έτοιμο το ίδιο απόγευμα.',
+  },
+  'ful.pickup_unpaid.t': { en: 'Reserve, pay in shop', el: 'Κράτηση, πληρωμή στο κατάστημα' },
+  'ful.pickup_unpaid.d': {
+    en: 'We put it aside for you. Pay at the counter when you collect.',
+    el: 'Το κρατάμε για σένα. Πληρώνεις στο κατάστημα κατά την παραλαβή.',
+  },
+  'ful.cod.t': { en: 'Cash on delivery', el: 'Αντικαταβολή' },
+  'ful.cod.d': {
+    en: 'No card needed. Pay the courier in cash when it arrives.',
+    el: 'Χωρίς κάρτα. Πληρώνεις τον courier με μετρητά κατά την παράδοση.',
+  },
+
+  // --- order status -------------------------------------------------------
+  'ord.loading': { en: 'Looking up your order…', el: 'Αναζήτηση παραγγελίας…' },
+  'ord.ref': { en: 'Order reference', el: 'Κωδικός παραγγελίας' },
+  'ord.method': { en: 'Fulfilment', el: 'Τρόπος παραλαβής' },
+  'ord.next': { en: 'What happens next', el: 'Τι γίνεται τώρα' },
+  'ord.retry': { en: 'Try payment again', el: 'Δοκίμασε ξανά' },
+  'ord.callUs': { en: 'Call the shop', el: 'Κάλεσε το κατάστημα' },
+  'ord.keepShopping': { en: 'Keep shopping', el: 'Συνέχεια αγορών' },
+  'ord.keepRef': {
+    en: 'Quote {ref} if you contact us about this order.',
+    el: 'Ανάφερε τον κωδικό {ref} όταν επικοινωνήσεις μαζί μας.',
+  },
+  'ord.paid.t': { en: 'Paid. Thank you.', el: 'Πληρώθηκε. Ευχαριστούμε.' },
+  'ord.paid.d': {
+    en: 'Your card payment went through and we have your order. A receipt is on its way from Viva.com.',
+    el: 'Η πληρωμή ολοκληρώθηκε και λάβαμε την παραγγελία σου. Η απόδειξη έρχεται από τη Viva.com.',
+  },
+  'ord.placed.t': { en: 'Order placed', el: 'Η παραγγελία καταχωρήθηκε' },
+  'ord.placed.d': {
+    en: 'Nothing to pay online. We will confirm by phone shortly.',
+    el: 'Δεν απαιτείται online πληρωμή. Θα επικοινωνήσουμε τηλεφωνικά.',
+  },
+  'ord.pending.t': { en: 'Still confirming', el: 'Σε επιβεβαίωση' },
+  'ord.pending.d': {
+    en: 'We are waiting on the payment provider. This page updates itself — give it a few seconds.',
+    el: 'Αναμένουμε τον πάροχο πληρωμών. Η σελίδα ανανεώνεται αυτόματα.',
+  },
+  'ord.cancelled.t': { en: 'Payment cancelled', el: 'Η πληρωμή ακυρώθηκε' },
+  'ord.cancelled.d': {
+    en: 'You backed out before paying, so nothing was charged. Your cart is still here.',
+    el: 'Δεν ολοκληρώθηκε η πληρωμή, οπότε δεν χρεώθηκε τίποτα. Το καλάθι σου παραμένει.',
+  },
+  'ord.failed.t': { en: 'Payment did not go through', el: 'Η πληρωμή δεν ολοκληρώθηκε' },
+  'ord.failed.d': {
+    en: 'Your bank declined it and nothing was charged. Try another card, or call us and we will take the order by phone.',
+    el: 'Η τράπεζα απέρριψε τη συναλλαγή και δεν χρεώθηκε τίποτα. Δοκίμασε άλλη κάρτα ή τηλεφώνησέ μας.',
+  },
+  'ord.review.t': { en: 'Held for a quick check', el: 'Σε έλεγχο' },
+  'ord.review.d': {
+    en: 'The amount we received does not match the order, so we have paused it rather than guess. We will call you today.',
+    el: 'Το ποσό δεν αντιστοιχεί στην παραγγελία, οπότε την έχουμε παγώσει. Θα σε καλέσουμε σήμερα.',
+  },
+  'ord.notFound': { en: 'No such order', el: 'Δεν βρέθηκε παραγγελία' },
+  'ord.notFoundBody': {
+    en: 'That reference does not match anything. If you were charged, call us with the amount and we will find it.',
+    el: 'Ο κωδικός δεν αντιστοιχεί σε παραγγελία. Αν χρεώθηκες, τηλεφώνησέ μας.',
+  },
+  'ord.offline': { en: 'Cannot reach the shop', el: 'Αδυναμία σύνδεσης' },
+  'ord.offlineBody': {
+    en: 'The order service is not responding right now. Your payment, if it went through, is safe with Viva.com.',
+    el: 'Η υπηρεσία παραγγελιών δεν απαντά. Η πληρωμή σου, εφόσον ολοκληρώθηκε, είναι καταγεγραμμένη στη Viva.com.',
+  },
+  'ord.next.delivery': {
+    en: 'We pack it today and the courier collects it. Expect it within 1–2 working days anywhere on the island.',
+    el: 'Ετοιμάζουμε την παραγγελία σήμερα και την παραλαμβάνει ο courier. Παράδοση σε 1–2 εργάσιμες.',
+  },
+  'ord.next.pickup_paid': {
+    en: 'It is already paid for. Come in any time we are open and ask for your order reference.',
+    el: 'Έχει πληρωθεί. Έλα οποιαδήποτε ώρα λειτουργίας και ανάφερε τον κωδικό.',
+  },
+  'ord.next.pickup_unpaid': {
+    en: 'We are setting it aside now. Pay at the counter when you collect — card or cash.',
+    el: 'Το κρατάμε στην άκρη. Πληρώνεις στο κατάστημα — κάρτα ή μετρητά.',
+  },
+  'ord.next.cod': {
+    en: 'The courier will call before delivering. Have the exact amount in cash if you can.',
+    el: 'Ο courier θα τηλεφωνήσει πριν την παράδοση. Έχε το ακριβές ποσό σε μετρητά.',
+  },
+
   // --- brands page --------------------------------------------------------
   'brands.title': { en: 'Brands on the shelf', el: 'Μάρκες στο ράφι' },
   'brands.sub': {
