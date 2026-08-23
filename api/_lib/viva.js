@@ -30,24 +30,37 @@ export const vivaEnv = () => (process.env.VIVA_ENV === 'production' ? 'productio
 export const hosts = () => (vivaEnv() === 'production' ? LIVE : DEMO)
 
 export class VivaError extends Error {
-  constructor(message, status, body) {
+  /** @param code machine-readable reason, so callers can tell "you haven't set
+   *  this up" apart from "Viva is having a bad day". */
+  constructor(message, status, body, code = 'PROVIDER_ERROR') {
     super(message)
     this.name = 'VivaError'
     this.status = status
     this.body = body
+    this.code = code
   }
 }
 
+/** True when Smart Checkout credentials are present. Lets callers refuse a
+ *  card order up front instead of failing halfway through. */
+export const isConfigured = () =>
+  Boolean(process.env.VIVA_CLIENT_ID && process.env.VIVA_CLIENT_SECRET)
+
+/** Merchant credentials are separate, and only webhooks need them. */
+export const isWebhookConfigured = () =>
+  Boolean(process.env.VIVA_MERCHANT_ID && process.env.VIVA_API_KEY)
+
 function credentials() {
-  const clientId = process.env.VIVA_CLIENT_ID
-  const clientSecret = process.env.VIVA_CLIENT_SECRET
-  if (!clientId || !clientSecret) {
+  if (!isConfigured()) {
     throw new VivaError(
-      'VIVA_CLIENT_ID / VIVA_CLIENT_SECRET are not set. Copy .env.example to .env.local and fill them in.',
-      500,
+      'Viva credentials are missing. Set VIVA_CLIENT_ID and VIVA_CLIENT_SECRET in .env.local ' +
+        '(local) or in the Vercel project settings — see PAYMENTS.md, "Getting the credentials".',
+      503,
+      null,
+      'NOT_CONFIGURED',
     )
   }
-  return { clientId, clientSecret }
+  return { clientId: process.env.VIVA_CLIENT_ID, clientSecret: process.env.VIVA_CLIENT_SECRET }
 }
 
 /* ---- token, cached in module scope --------------------------------------- */
@@ -230,14 +243,17 @@ export async function retrieveTransaction(transactionId) {
  * Checkout OAuth credentials.
  */
 export async function webhookVerificationKey() {
-  const merchantId = process.env.VIVA_MERCHANT_ID
-  const apiKey = process.env.VIVA_API_KEY
-  if (!merchantId || !apiKey) {
+  if (!isWebhookConfigured()) {
     throw new VivaError(
-      'VIVA_MERCHANT_ID / VIVA_API_KEY are not set — needed only for webhook verification.',
-      500,
+      'VIVA_MERCHANT_ID / VIVA_API_KEY are not set — needed only for webhook verification. ' +
+        'Card payments work without them; you just lose the webhook safety net.',
+      503,
+      null,
+      'NOT_CONFIGURED',
     )
   }
+  const merchantId = process.env.VIVA_MERCHANT_ID
+  const apiKey = process.env.VIVA_API_KEY
 
   const basic = Buffer.from(`${merchantId}:${apiKey}`).toString('base64')
   const res = await fetch(`${hosts().api}/api/messages/config/token`, {

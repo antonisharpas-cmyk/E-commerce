@@ -133,14 +133,26 @@ if (cfg.body?.paymentsConfigured) {
   )
   check('order code kept as a string', typeof card.body?.orderCode === 'string', typeof card.body?.orderCode)
 } else {
-  console.log('    (VIVA_CLIENT_ID not set — asserting graceful failure instead)')
-  check('unconfigured card checkout fails cleanly, not with a crash', card.status === 502, card.status)
-  check('error is the provider error, not a stack trace', card.body?.error === 'PAYMENT_PROVIDER_ERROR', card.body)
-  check('a reference is still returned so support can trace it', Boolean(card.body?.detail?.ref), card.body?.detail)
+  console.log('    (VIVA_CLIENT_ID not set — asserting graceful refusal instead)')
+  check('unconfigured card checkout → 503, not a crash', card.status === 503, card.status)
+  check(
+    'error names the real cause, not a generic provider failure',
+    card.body?.error === 'PAYMENTS_NOT_CONFIGURED',
+    card.body,
+  )
+  check('config advertises that cards are off', cfg.body?.paymentsConfigured === false, cfg.body?.paymentsConfigured)
 
   const wh = await get('/api/webhook')
-  check('webhook handshake fails cleanly without merchant creds', wh.status === 500, wh.status)
+  check('webhook handshake fails cleanly without merchant creds', wh.status === 503, wh.status)
   check('webhook error is explicit', wh.body?.error === 'WEBHOOK_KEY_UNAVAILABLE', wh.body)
+
+  // the offline paths must be entirely unaffected by missing card credentials
+  const stillWorks = await post('/api/checkout', {
+    lines: [line('asl-isolate-90')],
+    fulfilment: 'cod',
+    customer: CUSTOMER,
+  })
+  check('COD unaffected by missing card credentials', stillWorks.status === 200, stillWorks.status)
 }
 
 /* ---- the security-critical one ------------------------------------------ */

@@ -189,6 +189,18 @@ const DICT = {
     en: 'You will be taken to Viva.com to pay, then brought straight back here. Apple Pay and Google Pay are available on supported devices.',
     el: 'Θα μεταφερθείς στη Viva.com για την πληρωμή και θα επιστρέψεις αμέσως εδώ. Apple Pay και Google Pay είναι διαθέσιμα σε συμβατές συσκευές.',
   },
+  'checkout.setup.title': {
+    en: 'Card payments not configured yet',
+    el: 'Οι πληρωμές με κάρτα δεν έχουν ρυθμιστεί',
+  },
+  'checkout.setup.body': {
+    en: 'The shop is not connected to a payment provider on this deployment, so the two card options are disabled. Cash on delivery and reserve-in-shop work normally.',
+    el: 'Δεν υπάρχει σύνδεση με πάροχο πληρωμών, οπότε οι επιλογές κάρτας είναι απενεργοποιημένες. Η αντικαταβολή και η κράτηση λειτουργούν κανονικά.',
+  },
+  'checkout.err.notConfigured': {
+    en: 'Card payments are not available right now. Choose cash on delivery, or call the shop to order by phone.',
+    el: 'Οι πληρωμές με κάρτα δεν είναι διαθέσιμες. Επίλεξε αντικαταβολή ή τηλεφώνησέ μας.',
+  },
   'checkout.sandbox.title': { en: 'Sandbox mode — no money moves', el: 'Δοκιμαστική λειτουργία — καμία πραγματική πληρωμή' },
   'checkout.sandbox.body': {
     en: 'This is connected to the Viva.com demo environment. Pay with the test card below to walk the whole flow safely.',
@@ -217,6 +229,11 @@ const DICT = {
 
   // --- fulfilment methods -------------------------------------------------
   'ful.freeTag': { en: 'No fee', el: 'Χωρίς χρέωση' },
+  'ful.unavailable': { en: 'Unavailable', el: 'Μη διαθέσιμο' },
+  'ful.cardOff': {
+    en: 'Card payments are not switched on yet. Use cash on delivery or reserve and pay in the shop.',
+    el: 'Οι πληρωμές με κάρτα δεν είναι ακόμη ενεργές. Χρησιμοποίησε αντικαταβολή ή κράτηση με πληρωμή στο κατάστημα.',
+  },
   'ful.shipTag': { en: 'Free over €50', el: 'Δωρεάν άνω των €50' },
   'ful.delivery.t': { en: 'Deliver to me', el: 'Αποστολή σε μένα' },
   'ful.delivery.d': {

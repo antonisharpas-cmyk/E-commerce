@@ -31,8 +31,13 @@ export default async function handler(req, res) {
       const Key = await webhookVerificationKey()
       return json(res, 200, { Key })
     } catch (err) {
-      console.error('[webhook] key fetch failed', err instanceof VivaError ? err.body : err)
-      return fail(res, 500, 'WEBHOOK_KEY_UNAVAILABLE')
+      if (err instanceof VivaError) {
+        console.error(`[webhook] ${err.code} — ${err.message}`)
+        if (err.body) console.error('[webhook] provider said:', err.body)
+      } else {
+        console.error('[webhook] key fetch failed', err)
+      }
+      return fail(res, 503, 'WEBHOOK_KEY_UNAVAILABLE')
     }
   }
 

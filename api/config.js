@@ -8,7 +8,7 @@
 import { FULFILMENT, FREE_DELIVERY_AT, DELIVERY_FEE, COD_SURCHARGE, VAT_RATE } from '../src/lib/pricing.js'
 import { usingRedis } from './_lib/store.js'
 import { emailEnabled } from './_lib/notify.js'
-import { vivaEnv } from './_lib/viva.js'
+import { isConfigured, isWebhookConfigured, vivaEnv } from './_lib/viva.js'
 import { json, methodGuard } from './_lib/http.js'
 
 /** Turn options off per deployment, e.g. ENABLED_FULFILMENT="delivery,pickup_paid" */
@@ -26,7 +26,8 @@ export default async function handler(req, res) {
 
   return json(res, 200, {
     vivaEnv: vivaEnv(),
-    paymentsConfigured: Boolean(process.env.VIVA_CLIENT_ID && process.env.VIVA_CLIENT_SECRET),
+    paymentsConfigured: isConfigured(),
+    webhookConfigured: isWebhookConfigured(),
     fulfilment: enabledFulfilment(),
     durableOrders: usingRedis,
     emailEnabled,

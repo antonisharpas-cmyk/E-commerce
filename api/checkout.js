@@ -13,7 +13,7 @@
    ========================================================================== */
 
 import { FULFILMENT, orderRef, quote } from '../src/lib/pricing.js'
-import { createPaymentOrder, VivaError, vivaEnv } from './_lib/viva.js'
+import { createPaymentOrder, isConfigured, VivaError, vivaEnv } from './_lib/viva.js'
 import { getOrder, putOrder } from './_lib/store.js'
 import { notifyCustomer, notifyShop } from './_lib/notify.js'
 import { fail, json, methodGuard, rateLimit, readJson, siteOrigin, validateCustomer } from './_lib/http.js'
@@ -56,9 +56,20 @@ export default async function handler(req, res) {
   })
   if (!valid) return fail(res, 422, 'INVALID_CUSTOMER', errors)
 
+  /* ---- 3. refuse a card order we already know cannot be paid ----------- */
+  if (method.paysOnline && !isConfigured()) {
+    console.error(
+      '[checkout] card order refused: Viva credentials are not set.\n' +
+        '           Set VIVA_CLIENT_ID and VIVA_CLIENT_SECRET in .env.local, or in the\n' +
+        '           Vercel project settings. See PAYMENTS.md → "Getting the credentials".\n' +
+        '           Cash-on-delivery and reserve-in-shop need no credentials and still work.',
+    )
+    return fail(res, 503, 'PAYMENTS_NOT_CONFIGURED')
+  }
+
   const lang = body.lang === 'el' ? 'el' : 'en'
 
-  /* ---- 3. persist the order in `pending` ------------------------------- */
+  /* ---- 4. persist the order in `pending` ------------------------------- */
   let ref
   try {
     ref = await uniqueRef()
@@ -86,7 +97,7 @@ export default async function handler(req, res) {
 
   await putOrder(order)
 
-  /* ---- 4a. no online payment: done ------------------------------------- */
+  /* ---- 5a. no online payment: done ------------------------------------- */
   if (!method.paysOnline) {
     // email must never be able to fail the order
     await Promise.allSettled([notifyShop(order), notifyCustomer(order)])
@@ -98,7 +109,7 @@ export default async function handler(req, res) {
     })
   }
 
-  /* ---- 4b. online payment: hand off to Viva ---------------------------- */
+  /* ---- 5b. online payment: hand off to Viva ---------------------------- */
   const itemSummary = q.lines
     .map((l) => `${l.qty}x ${l.name}`)
     .join(', ')
@@ -122,7 +133,9 @@ export default async function handler(req, res) {
       error: err instanceof VivaError ? `${err.message}` : 'UNKNOWN',
     })
     if (err instanceof VivaError) {
-      console.error('[checkout] Viva error', err.status, err.body)
+      console.error(`[checkout] ${err.code} (HTTP ${err.status}) — ${err.message}`)
+      if (err.body) console.error('[checkout] provider said:', err.body)
+      if (err.code === 'NOT_CONFIGURED') return fail(res, 503, 'PAYMENTS_NOT_CONFIGURED', { ref })
       return fail(res, 502, 'PAYMENT_PROVIDER_ERROR', { ref })
     }
     console.error('[checkout] unexpected', err)

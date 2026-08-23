@@ -39,14 +39,24 @@ export default function Checkout() {
     }
   }, [])
 
+  /* Card payments need Viva credentials on the server. Until they are set we
+     still show the card options — hiding them silently makes the demo look
+     broken — but disabled, with the reason stated. */
+  const cardReady = config == null || config.paymentsConfigured !== false
+
   const available = useMemo(() => {
     const allowed = config?.fulfilment ?? METHOD_ORDER
     return METHOD_ORDER.filter((m) => allowed.includes(m))
   }, [config])
 
+  const selectable = useMemo(
+    () => available.filter((m) => cardReady || !FULFILMENT[m].paysOnline),
+    [available, cardReady],
+  )
+
   useEffect(() => {
-    if (available.length && !available.includes(method)) setMethod(available[0])
-  }, [available, method])
+    if (selectable.length && !selectable.includes(method)) setMethod(selectable[0])
+  }, [selectable, method])
 
   const priced = cart.priceFor(method)
   const needsAddress = FULFILMENT[method].needsAddress
@@ -93,6 +103,7 @@ export default function Checkout() {
         {
           NETWORK: 'checkout.err.network',
           PAYMENT_PROVIDER_ERROR: 'checkout.err.provider',
+          PAYMENTS_NOT_CONFIGURED: 'checkout.err.notConfigured',
           RATE_LIMITED: 'checkout.err.rate',
           INSUFFICIENT_STOCK: 'checkout.err.stock',
           EMPTY_CART: 'cart.empty',
@@ -133,8 +144,19 @@ export default function Checkout() {
         <h1 className="text-[clamp(2.2rem,5.5vw,3.6rem)]">{t('checkout.title')}</h1>
       </div>
 
+      {/* setup notice — card payments are not wired up yet */}
+      {config && config.paymentsConfigured === false && (
+        <div className="mt-6 flex items-start gap-3 rounded-xl border border-gold/40 bg-gold-soft px-5 py-4">
+          <IconShield width={19} height={19} className="mt-0.5 shrink-0 text-gold" />
+          <div>
+            <p className="text-[13px] font-bold text-gold">{t('checkout.setup.title')}</p>
+            <p className="mt-1 text-[12.5px] text-muted">{t('checkout.setup.body')}</p>
+          </div>
+        </div>
+      )}
+
       {/* sandbox banner */}
-      {config && config.vivaEnv !== 'production' && (
+      {config && config.paymentsConfigured && config.vivaEnv !== 'production' && (
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-gold/40 bg-gold-soft px-5 py-4">
           <IconShield width={19} height={19} className="mt-0.5 shrink-0 text-gold" />
           <div>
@@ -153,14 +175,20 @@ export default function Checkout() {
           <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
             {available.map((id) => {
               const on = id === method
+              const blocked = FULFILMENT[id].paysOnline && !cardReady
               return (
                 <button
                   key={id}
                   type="button"
+                  disabled={blocked}
                   onClick={() => setMethod(id)}
                   aria-pressed={on}
                   className={`rounded-xl border p-4 text-left transition-colors ${
-                    on ? 'border-brand bg-brand-soft/50' : 'border-line bg-ink-2 hover:border-brand/50'
+                    blocked
+                      ? 'cursor-not-allowed border-line bg-ink-2/40 opacity-50'
+                      : on
+                        ? 'border-brand bg-brand-soft/50'
+                        : 'border-line bg-ink-2 hover:border-brand/50'
                   }`}
                 >
                   <span className="flex items-center justify-between gap-2">
@@ -168,14 +196,18 @@ export default function Checkout() {
                       {t(`ful.${id}.t`)}
                     </span>
                     <span className="shrink-0 text-[11px] font-bold text-gold">
-                      {FULFILMENT[id].surcharge
-                        ? `+${fmt(FULFILMENT[id].surcharge)}`
-                        : FULFILMENT[id].needsAddress
-                          ? t('ful.shipTag')
-                          : t('ful.freeTag')}
+                      {blocked
+                        ? t('ful.unavailable')
+                        : FULFILMENT[id].surcharge
+                          ? `+${fmt(FULFILMENT[id].surcharge)}`
+                          : FULFILMENT[id].needsAddress
+                            ? t('ful.shipTag')
+                            : t('ful.freeTag')}
                     </span>
                   </span>
-                  <span className="mt-1.5 block text-[12px] leading-relaxed text-muted">{t(`ful.${id}.d`)}</span>
+                  <span className="mt-1.5 block text-[12px] leading-relaxed text-muted">
+                    {blocked ? t('ful.cardOff') : t(`ful.${id}.d`)}
+                  </span>
                 </button>
               )
             })}
