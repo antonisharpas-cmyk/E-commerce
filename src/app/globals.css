@@ -1,0 +1,87 @@
+@import 'tailwindcss';
+
+/* ============================================================================
+ * Design tokens. A fashion storefront should get out of the way of the
+ * product photography, so the palette is near-monochrome and the colour comes
+ * from the clothes. Mirrors BRAND.theme in src/config/brand.ts.
+ * ========================================================================== */
+@theme {
+  --color-ink: #111111;
+  --color-ink-soft: #4a4a4a;
+  --color-muted: #767676;
+  --color-line: #e5e5e5;
+  --color-line-strong: #cfcfcf;
+  --color-paper: #ffffff;
+  --color-paper-2: #f7f7f5;
+  --color-sale: #b3261e;
+  --color-ok: #1d6d3f;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+
+  --spacing-gutter: 1.25rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Keyboard focus must always be visible — spec asks for accessibility, and
+     a storefront is navigated by keyboard more often than people assume. */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  /* Remove the focus ring for pointer users only, never for keyboard. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+@utility container-x {
+  width: 100%;
+  max-width: 96rem;
+  margin-inline: auto;
+  padding-inline: var(--spacing-gutter);
+}
+
+/* Uppercase micro-labels, used for sizes, eyebrows and buttons. */
+@utility label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+@utility hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
