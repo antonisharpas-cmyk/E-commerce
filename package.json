@@ -16,11 +16,12 @@
     "check:concurrency": "tsx scripts/concurrency-check.ts",
     "check:promo": "tsx scripts/promo-check.ts",
     "check:views": "tsx scripts/views-check.ts",
-    "check": "npm run check:concurrency && npm run check:promo && npm run check:views && npm run check:auth",
+    "check": "npm run check:concurrency && npm run check:promo && npm run check:views && npm run check:auth && npm run check:admin",
     "db:check": "tsx scripts/db-check.ts",
     "db:local": "tsx scripts/local-db.ts",
     "check:auth": "tsx scripts/auth-check.ts",
-    "art": "tsx scripts/generate-art.ts"
+    "art": "tsx scripts/generate-art.ts",
+    "check:admin": "tsx scripts/admin-check.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

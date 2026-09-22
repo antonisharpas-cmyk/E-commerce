@@ -67,7 +67,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  /* Everything except Next internals, the API (which is locale-agnostic), and
-     static files with an extension. */
-  matcher: ['/((?!api|_next|.*\\..*).*)'],
+  /* Everything except Next internals, the API (which is locale-agnostic),
+     /admin (staff-only, one language — sending it through locale negotiation
+     would rewrite /admin to /en/admin and 404), and static files. */
+  matcher: ['/((?!api|admin|_next|.*\\..*).*)'],
 }

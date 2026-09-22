@@ -9,6 +9,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { db, pool } from '@/db'
+import { SINGLE_ENGINE_REASON, isSingleEngineDatabase } from '@/db/engine'
 import { marketingConsents, otpCodes, sessions, users, wishlists } from '@/db/schema'
 import { normalisePhone, registerSchema } from '@/lib/validation'
 import {
@@ -30,6 +31,10 @@ import {
 } from '../account'
 import { hashPassword, needsRehash, verifyPassword } from '../password'
 import { getUserByToken, revokeAllSessionsForUser } from '../session'
+
+/* Asked once, at collection time, so the skip appears in the report rather
+   than the test hanging and taking the whole run's connection with it. */
+const SERIALISED = await isSingleEngineDatabase()
 
 const BASE = {
   firstName: 'Elena',
@@ -196,7 +201,11 @@ describe('duplicate accounts are refused', () => {
     ).rejects.toMatchObject({ code: 'PHONE_TAKEN' })
   })
 
-  it('refuses at the database level when two verifications race', async () => {
+  /* Skipped on the embedded development database, which runs one engine and
+     would deadlock rather than race — see src/db/engine.ts. */
+  it.skipIf(SERIALISED)(`refuses at the database level when two verifications race${
+    SERIALISED ? ` — skipped: ${SINGLE_ENGINE_REASON}` : ''
+  }`, async () => {
     /* Both registrations pass the availability check because neither account
        exists yet; only the unique index can decide the winner. */
     const a = registerSchema.parse({ ...BASE, email: 'race-a@example.com', phone: '99000010' })

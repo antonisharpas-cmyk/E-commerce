@@ -32,6 +32,12 @@ import { PGLiteSocketServer } from '@electric-sql/pglite-socket'
 const DATA_DIR = process.env.LOCAL_DB_DIR ?? join(process.cwd(), '.localdb')
 const PORT = Number(process.env.LOCAL_DB_PORT ?? 5432)
 const HOST = '127.0.0.1'
+/* The default is ONE, which means `npm run db:seed` or `npm run check` while
+   `npm run dev` is running gets "Connection terminated unexpectedly" — the
+   second client is simply dropped. Queries are queued inside the engine either
+   way, so allowing several connections costs nothing and makes the ordinary
+   two-terminal workflow work. */
+const MAX_CONNECTIONS = Number(process.env.LOCAL_DB_MAX_CONNECTIONS ?? 20)
 
 async function main() {
   mkdirSync(DATA_DIR, { recursive: true })
@@ -46,7 +52,12 @@ async function main() {
   const { rows } = await db.query<{ version: string }>('select version()')
   console.log(`  ${rows[0].version.split(' on ')[0]}`)
 
-  const server = new PGLiteSocketServer({ db, port: PORT, host: HOST })
+  const server = new PGLiteSocketServer({
+    db,
+    port: PORT,
+    host: HOST,
+    maxConnections: MAX_CONNECTIONS,
+  })
 
   try {
     await server.start()
@@ -68,7 +79,7 @@ async function main() {
     throw err
   }
 
-  console.log(`\n  listening on ${HOST}:${PORT}\n`)
+  console.log(`\n  listening on ${HOST}:${PORT} (up to ${MAX_CONNECTIONS} connections)\n`)
   console.log('  Put this in .env.local:\n')
   console.log(`      DATABASE_URL="postgresql://postgres@${HOST}:${PORT}/postgres"`)
   console.log('      DATABASE_POOL_MAX=1\n')

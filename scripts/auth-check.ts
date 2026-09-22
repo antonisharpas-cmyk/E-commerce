@@ -15,7 +15,7 @@ import './load-env'
 import { and, eq, sql } from 'drizzle-orm'
 import { db, pool } from '../src/db'
 import { cartItems, carts, otpCodes, users } from '../src/db/schema'
-import { productVariants, products } from '../src/db/schema'
+import { inventory, productVariants, products } from '../src/db/schema'
 
 const BASE = process.env.CHECK_BASE ?? 'http://localhost:3100'
 
@@ -36,7 +36,6 @@ function at(value: Json | undefined, ...path: (string | number)[]): Json | undef
   return cursor
 }
 const str = (v: Json | undefined) => (typeof v === 'string' ? v : undefined)
-const num = (v: Json | undefined) => (typeof v === 'number' ? v : undefined)
 
 function makeVisitor() {
   let cookie = ''
@@ -167,10 +166,16 @@ async function main() {
   check('still no user', (await userCount(email)) === 0)
 
   /* --- put something in the bag as a guest, to prove it survives --- */
+  /* Deliberately the SCARCEST variant that still has one unit: merging a guest
+     bag into an account has to hand the reservation over rather than ask the
+     shelf for a second copy, and only the last item in stock proves it. */
   const [variant] = await db
     .select({ id: productVariants.id })
     .from(productVariants)
     .innerJoin(products, eq(products.id, productVariants.productId))
+    .innerJoin(inventory, eq(inventory.variantId, productVariants.id))
+    .where(sql`${inventory.onHand} - ${inventory.reserved} >= 1`)
+    .orderBy(sql`${inventory.onHand} - ${inventory.reserved}`, productVariants.sku)
     .limit(1)
   if (variant) {
     const added = await v.post('/api/cart', { variantId: variant.id, quantity: 1 })

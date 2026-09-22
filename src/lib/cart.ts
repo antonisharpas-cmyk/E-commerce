@@ -119,8 +119,15 @@ export async function mergeGuestCart(anonymousToken: string, userId: string): Pr
     .from(cartItems)
     .where(eq(cartItems.cartId, guest.id))
 
-  /* Re-reserve against the user's cart rather than moving reservation rows:
-     the stock check has to run again, and the guest's holds are released. */
+  /* Give the guest's holds back to the shelf BEFORE re-reserving them for the
+     account. The units are the same units: asking for them again while the
+     guest cart still holds them means the last item in stock can never be
+     merged — the shop would be competing with itself and the customer would
+     watch their bag empty as they signed in. */
+  await releaseCart(guest.id)
+
+  /* Re-reserve against the user's cart rather than moving reservation rows,
+     so the stock check runs again and the normal per-line limit applies. */
   for (const line of guestLines) {
     const existing = await db
       .select({ quantity: cartItems.quantity })
@@ -135,7 +142,6 @@ export async function mergeGuestCart(anonymousToken: string, userId: string): Pr
     })
   }
 
-  await releaseCart(guest.id)
   await db.delete(carts).where(eq(carts.id, guest.id))
 }
 

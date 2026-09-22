@@ -3,6 +3,9 @@
 A fashion e-commerce platform: Next.js 16 (App Router) + TypeScript + Tailwind,
 PostgreSQL via Drizzle, three languages (EN / EL / RU).
 
+Running the shop day to day — signing in as an admin, stock, prices, settings —
+is in **[ADMIN.md](ADMIN.md)**.
+
 Brand name, address and legal details live in **`src/config/brand.ts`** — it is
 currently a placeholder (`ATELIER`, `TODO` company details) and is the one file
 to edit when the real name is decided.
@@ -45,23 +48,28 @@ promo codes (one expired) — every state the UI has to handle.
 
 ```bash
 npm test          # 141 unit/integration tests against a real Postgres
-npm run check     # 77 checks against a running dev server, over HTTP
+npm run check     # 123 checks against a running dev server, over HTTP
 npm run lint
 npm run build
 ```
+
+One unit test is skipped on the embedded development database (`npm run db:local`),
+which runs a single engine and would deadlock rather than race — see
+`src/db/engine.ts`. It runs against an installed PostgreSQL.
 
 `npm test` needs a **separate** database — `.env.test.local` with a
 `DATABASE_URL` pointing at e.g. `storefront_test`. The tests truncate tables, so
 pointing them at the dev database wipes your seed data.
 
-The three HTTP checks are the ones worth reading:
+The HTTP checks are the ones worth reading:
 
 | Script | What it proves |
 | --- | --- |
 | `check:concurrency` | Two — then ten — visitors race for the last unit. Exactly one wins, the losers get a readable 409, nothing is ever oversold. |
 | `check:promo` | A promo code is validated, priced and stored server-side; a forged discount in the request body is ignored; refusals explain themselves. |
 | `check:views` | Views are counted per person (a refresh does not inflate them), and nobody can read anyone else's history. |
-| `check:auth` | No account exists until the emailed code is verified; duplicate email or phone refused; a wrong password and an unknown address are indistinguishable; the guest bag follows the customer into their account. |
+| `check:auth` | No account exists until the emailed code is verified; duplicate email or phone refused; a wrong password and an unknown address are indistinguishable; the guest bag follows the customer into their account — including the last item in stock. |
+| `check:admin` | A stranger and a signed-in customer are both turned away from every admin page and every admin API, and their write attempts change nothing; an admin gets in; stock cannot be set below what live carts hold; a settings change reaches the storefront on the next request. |
 
 `npm run db:check` is the one to reach for first when something will not start:
 it walks configuration → connection → schema → data and stops at the first
