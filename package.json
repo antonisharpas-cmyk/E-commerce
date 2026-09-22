@@ -17,9 +17,12 @@
     "check:promo": "tsx scripts/promo-check.ts",
     "check:views": "tsx scripts/views-check.ts",
     "check": "npm run check:concurrency && npm run check:promo && npm run check:views",
-    "db:check": "tsx scripts/db-check.ts"
+    "db:check": "tsx scripts/db-check.ts",
+    "db:local": "tsx scripts/local-db.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.3",
     "jose": "^6.2.12",

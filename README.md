@@ -9,13 +9,33 @@ to edit when the real name is decided.
 
 ## Running it
 
+You need a PostgreSQL. If you have one, put its URL in `.env.local`. If you do
+not, and would rather not install one, the project ships with an embedded
+PostgreSQL that runs from `node_modules`:
+
 ```bash
-cp .env.example .env.local        # then fill DATABASE_URL
 npm install
+npm run db:local                  # terminal 1 — leave it running
+```
+
+It prints the two lines to put in `.env.local`. Then, in a second terminal:
+
+```bash
+npm run db:check                  # confirms the connection before anything else
 npm run db:push                   # schema + CHECK constraints + indexes
 npm run db:seed                   # 20 categories, 12 products, 80 variants
 npm run dev                       # http://localhost:3000
 ```
+
+`db:local` is real PostgreSQL 18 compiled to WebAssembly (PGlite), speaking the
+normal wire protocol on a TCP port — the application cannot tell the difference
+and needs no changes. Its one limit is that queries are serialised through a
+single engine, so set `DATABASE_POOL_MAX=1` and do not use it to judge the
+concurrency behaviour; the reservation tests want a real server. Its data lives
+in `./.localdb`.
+
+When `db:check` says the database is ready and `npm run dev` still misbehaves,
+the problem is the app, not the setup — that is the point of the check.
 
 The seed prints its logins. It also deliberately includes a sold-out size, a
 nearly sold-out size, a manual sale price, an active category promotion and two
@@ -41,6 +61,11 @@ The three HTTP checks are the ones worth reading:
 | `check:concurrency` | Two — then ten — visitors race for the last unit. Exactly one wins, the losers get a readable 409, nothing is ever oversold. |
 | `check:promo` | A promo code is validated, priced and stored server-side; a forged discount in the request body is ignored; refusals explain themselves. |
 | `check:views` | Views are counted per person (a refresh does not inflate them), and nobody can read anyone else's history. |
+
+`npm run db:check` is the one to reach for first when something will not start:
+it walks configuration → connection → schema → data and stops at the first
+broken link with the fix, and prints no password, so its output is safe to
+share.
 
 ## The parts that carry the design decisions
 
