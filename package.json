@@ -16,7 +16,8 @@
     "check:concurrency": "tsx scripts/concurrency-check.ts",
     "check:promo": "tsx scripts/promo-check.ts",
     "check:views": "tsx scripts/views-check.ts",
-    "check": "npm run check:concurrency && npm run check:promo && npm run check:views"
+    "check": "npm run check:concurrency && npm run check:promo && npm run check:views",
+    "db:check": "tsx scripts/db-check.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
