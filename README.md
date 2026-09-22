@@ -45,7 +45,7 @@ promo codes (one expired) — every state the UI has to handle.
 
 ```bash
 npm test          # 141 unit/integration tests against a real Postgres
-npm run check     # 46 checks against a running dev server, over HTTP
+npm run check     # 77 checks against a running dev server, over HTTP
 npm run lint
 npm run build
 ```
@@ -61,6 +61,7 @@ The three HTTP checks are the ones worth reading:
 | `check:concurrency` | Two — then ten — visitors race for the last unit. Exactly one wins, the losers get a readable 409, nothing is ever oversold. |
 | `check:promo` | A promo code is validated, priced and stored server-side; a forged discount in the request body is ignored; refusals explain themselves. |
 | `check:views` | Views are counted per person (a refresh does not inflate them), and nobody can read anyone else's history. |
+| `check:auth` | No account exists until the emailed code is verified; duplicate email or phone refused; a wrong password and an unknown address are indistinguishable; the guest bag follows the customer into their account. |
 
 `npm run db:check` is the one to reach for first when something will not start:
 it walks configuration → connection → schema → data and stops at the first
@@ -87,7 +88,7 @@ product pages with Product JSON-LD, cart with atomic stock reservation, promo
 codes, promotions, product views feeding "most viewed" and "recently viewed",
 localisation and locale negotiation.
 
-Registration/OTP/session logic and its tests exist; the sign-in and account
-**pages** do not yet. Still to come: Stripe checkout and webhooks, orders and
+Registration with email verification, sign-in, sign-out and a basic account
+page are built and verified. Still to come: Stripe checkout and webhooks, orders and
 order tracking, transactional email, customer accounts, the admin panel, then
 the SEO/performance/security passes.

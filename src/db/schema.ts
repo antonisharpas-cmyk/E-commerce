@@ -386,8 +386,15 @@ export const carts = pgTable(
   'carts',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    /* Either a logged-in user or an anonymous cookie token — never both null. */
-    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    /* Either a logged-in user or an anonymous cookie token — never both null,
+       which `carts_has_an_owner` enforces.
+
+       CASCADE, not SET NULL: a signed-in cart has no anonymous token, so
+       nulling the user leaves a row that owns stock and that nobody can reach
+       — and the CHECK constraint rightly refuses it, which used to make
+       deleting a customer fail outright. A cart is working state, not history;
+       the orders are the history and they are kept. */
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
     anonymousToken: varchar('anonymous_token', { length: 64 }),
     appliedPromoCodeId: uuid('applied_promo_code_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
