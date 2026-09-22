@@ -77,11 +77,50 @@
   display: none;
 }
 
+/* --------------------------------------------------------------- marquee --
+   The moving product strip on the homepage. The track holds the list twice and
+   travels exactly half its own width, so the second copy lands where the first
+   began and the seam never shows.
+
+   One compositor-driven animation, no per-frame JavaScript. */
+
+.marquee-track {
+  width: max-content;
+  animation: marquee-scroll var(--marquee-duration, 46s) linear infinite;
+  animation-direction: var(--marquee-direction, normal);
+  will-change: transform;
+}
+
+/* Pause while someone is reading a card, or tabbing through one. */
+.marquee:hover .marquee-track,
+.marquee:focus-within .marquee-track {
+  animation-play-state: paused;
+}
+
+@keyframes marquee-scroll {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    /* Half the track, plus half the gap that sits between the two copies. */
+    transform: translate3d(calc(-50% - 0.375rem), 0, 0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* Not "instant" — OFF. A strip that finishes its loop in a millisecond is
+     worse than one that never moved. It becomes a row you scroll yourself. */
+  .marquee-track {
+    animation: none !important;
+    width: auto;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 }

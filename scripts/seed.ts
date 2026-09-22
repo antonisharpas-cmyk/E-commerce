@@ -45,59 +45,14 @@ import {
   wishlistItems,
   wishlists,
 } from '../src/db/schema'
+import { artUrl } from './art-manifest'
 import { hashPassword } from '../src/lib/auth/password'
 import { seedMissingSettings } from '../src/lib/settings'
 
-/* Neutral placeholder imagery, generated rather than downloaded — no licence
-   questions and no binary assets in the repo. Replace with real photography
-   by setting `image` on the product rows. */
-function placeholder(label: string, tone: string, accent: string) {
-  /* SVG does not wrap text, so a long product name runs off both edges of the
-     card. Break it into lines that fit the 600-wide canvas and stack them. */
-  const MAX_CHARS = 16
-  const lines: string[] = []
-  for (const word of label.split(/\s+/).filter(Boolean)) {
-    const last = lines[lines.length - 1]
-    if (last && `${last} ${word}`.length <= MAX_CHARS) {
-      lines[lines.length - 1] = `${last} ${word}`
-    } else {
-      lines.push(word)
-    }
-  }
-
-  /* Shrink a little when a single word is still too wide to fit. */
-  const longest = lines.reduce((n, l) => Math.max(n, l.length), 0)
-  const fontSize = Math.min(26, Math.floor((520 / longest) * 1.55))
-  const lineHeight = fontSize * 1.7
-  const firstBaseline = 400 - ((lines.length - 1) * lineHeight) / 2
-
-  const text = lines
-    .map(
-      (line, i) =>
-        `<text x="300" y="${(firstBaseline + i * lineHeight).toFixed(0)}" text-anchor="middle"
-        font-family="Helvetica,Arial,sans-serif" font-size="${fontSize}" letter-spacing="5"
-        fill="rgba(255,255,255,.82)">${escapeXml(line)}</text>`,
-    )
-    .join('\n  ')
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="${tone}"/><stop offset="1" stop-color="${accent}"/>
-  </linearGradient></defs>
-  <rect width="600" height="800" fill="url(#g)"/>
-  ${text}
-</svg>`
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
-}
-
-function escapeXml(s: string) {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
+/* Product imagery lives in public/products as real files — see
+   scripts/generate-art.ts (`npm run art`) and scripts/art-manifest.ts. The seed
+   only references them, so dropping a photograph into that folder replaces the
+   drawing with no change here. */
 
 /* Hero stand-in. Carries no text — the headline, subtitle and buttons are real
    DOM over the top of it, so anything written into the artwork double-prints.
@@ -119,32 +74,6 @@ function heroPlaceholder(w: number, h: number) {
     <path d="M${w * 0.55} 0 L${w} ${h * 0.62}"/>
     <path d="M${w * 0.68} 0 L${w} ${h * 0.44}"/>
     <path d="M${w * 0.42} ${h} L${w} ${h * 0.18}"/>
-  </g>
-</svg>`
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
-}
-
-/* Category tile artwork. Textless for the same reason as the hero — the tile
-   prints the category name over the top of it. */
-const CATEGORY_TONES: [string, string][] = [
-  ['#3a3f46', '#15181c'],
-  ['#4a4038', '#1b1714'],
-  ['#2f3a3a', '#111818'],
-  ['#3d3644', '#17131b'],
-  ['#44403a', '#1a1815'],
-  ['#333c44', '#12171c'],
-]
-
-function categoryPlaceholder(index: number) {
-  const [tone, accent] = CATEGORY_TONES[index % CATEGORY_TONES.length]
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 600">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="${tone}"/><stop offset="1" stop-color="${accent}"/>
-  </linearGradient></defs>
-  <rect width="480" height="600" fill="url(#g)"/>
-  <g fill="none" stroke="rgba(255,255,255,.06)" stroke-width="1.5">
-    <path d="M0 ${420 + (index % 3) * 40} L480 ${160 + (index % 4) * 50}"/>
-    <path d="M0 ${520 + (index % 2) * 30} L480 ${300 + (index % 3) * 40}"/>
   </g>
 </svg>`
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
@@ -497,7 +426,7 @@ async function main() {
           slug: child.slug,
           name: child.name,
           position: childIndex,
-          imageUrl: categoryPlaceholder(index * 10 + childIndex),
+          imageUrl: `/products/category-${root.slug}-${child.slug}.svg`,
           isActive: true,
         })
         .returning({ id: categories.id })
@@ -543,22 +472,27 @@ async function main() {
       })
       .returning({ id: products.id })
 
-    /* Two images per product: front and back placeholders. */
+    /* Front and back, from public/products — a photograph if the shop has
+       supplied one, otherwise the drawn garment. See scripts/generate-art.ts. */
     await db.insert(productImages).values([
       {
         productId: product.id,
-        url: placeholder(spec.name.en.toUpperCase(), spec.tone[0], spec.tone[1]),
+        url: artUrl(spec.slug),
         alt: { en: spec.name.en, el: spec.name.el, ru: spec.name.ru },
-        width: 600,
-        height: 800,
+        width: 900,
+        height: 1200,
         position: 0,
       },
       {
         productId: product.id,
-        url: placeholder('BACK', spec.tone[1], spec.tone[0]),
-        alt: { en: `${spec.name.en} — back`, el: spec.name.el, ru: spec.name.ru },
-        width: 600,
-        height: 800,
+        url: artUrl(spec.slug, true),
+        alt: {
+          en: `${spec.name.en} — back`,
+          el: `${spec.name.el} — πίσω`,
+          ru: `${spec.name.ru} — сзади`,
+        },
+        width: 900,
+        height: 1200,
         position: 1,
       },
     ])

@@ -17,6 +17,7 @@ import { getCategoryTree, listProducts, t as tr } from '@/lib/catalog'
 import { getSetting } from '@/lib/settings'
 import { formatMoney } from '@/lib/pricing'
 import { ProductCard } from '@/components/ProductCard'
+import { ProductMarquee } from '@/components/ProductMarquee'
 import { SectionHead } from '@/components/ui'
 
 export const revalidate = 60
@@ -86,12 +87,14 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const t = getTranslator(locale)
   const base = `/${locale}`
 
-  const [hero, promo, categories, newIn, onSale, threshold] = await Promise.all([
+  const [hero, promo, categories, newIn, onSale, popular, threshold] = await Promise.all([
     getHero(),
     getHomepagePromotion(),
     getCategoryTree(),
     listProducts({ sort: 'newest', page: 1, perPage: 8, locale }),
     listProducts({ sort: 'newest', page: 1, perPage: 4, onSale: true, locale }),
+    /* The moving strip wants enough products that the loop is not obvious. */
+    listProducts({ sort: 'popular', page: 1, perPage: 12, locale }),
     getSetting('free_delivery_threshold_cents'),
   ])
 
@@ -225,6 +228,18 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
           )}
         </div>
       </section>
+
+      {/* --------------------------------------------- the moving strip --- */}
+      {popular.items.length > 2 && (
+        <section className="border-y border-line py-12">
+          <div className="container-x">
+            <SectionHead title={t('home.trending')} sub={t('home.trendingSub')} />
+          </div>
+          {/* Full-bleed: the strip runs off both edges of the screen, which is
+              what makes it read as continuous rather than as a boxed widget. */}
+          <ProductMarquee products={popular.items} locale={locale} seconds={52} />
+        </section>
+      )}
 
       {/* -------------------------------------------------------- new in --- */}
       <section className="container-x pb-14">

@@ -78,6 +78,8 @@ share.
 | `src/lib/auth/otp.ts` | Registration OTP. An unverified signup creates no user at all, and the attempt counter is committed before the rejection is thrown. |
 | `src/lib/db-errors.ts` | Unwraps driver errors so a unique-violation is identified by constraint name rather than by substring-matching a message. |
 | `src/lib/sizes.ts` | Sizes sort as XS→XXL, not alphabetically. Every list of sizes goes through it. |
+| `public/products/` | Product imagery. `npm run art` draws each garment — a hoodie with a hood, a slip dress with a bias hem — and **never overwrites a photograph**: drop `<slug>.jpg` in here, re-run `npm run art && npm run db:seed`, and the photo is used instead. That is the upgrade path from placeholder to real photography, with no code change. |
+| `src/components/ProductMarquee.tsx` | The moving strip on the homepage. The list is rendered twice and the track travels exactly half its width, so the loop is seamless; one CSS animation, no per-frame JavaScript. Pauses on hover and on keyboard focus, and does not animate at all under `prefers-reduced-motion`. |
 | `src/i18n/messages.ts` | All UI copy, with plural forms selected by `Intl.PluralRules` — Greek "1 προϊόν", Russian one/few/many. |
 
 ## Where it stands

@@ -36,6 +36,8 @@ export const messages = {
     'home.shopNow': 'Shop now',
     'home.viewAll': 'View all',
     'home.categories': 'Shop by category',
+    'home.trending': 'Moving fast',
+    'home.trendingSub': 'What people are looking at right now.',
 
     /* --- listing --- */
     'list.results': 'one:{n} product|other:{n} products',
@@ -183,6 +185,8 @@ export const messages = {
     'home.shopNow': 'Αγόρασε τώρα',
     'home.viewAll': 'Δες όλα',
     'home.categories': 'Αγορά ανά κατηγορία',
+    'home.trending': 'Φεύγουν γρήγορα',
+    'home.trendingSub': 'Αυτά που βλέπουν όλοι αυτή τη στιγμή.',
 
     'list.results': 'one:{n} προϊόν|other:{n} προϊόντα',
     'list.noResults': 'Κανένα προϊόν με αυτά τα φίλτρα.',
@@ -323,6 +327,8 @@ export const messages = {
     'home.shopNow': 'В магазин',
     'home.viewAll': 'Смотреть все',
     'home.categories': 'По категориям',
+    'home.trending': 'Разбирают быстро',
+    'home.trendingSub': 'То, что смотрят прямо сейчас.',
 
     'list.results': 'one:{n} товар|few:{n} товара|many:{n} товаров|other:{n} товара',
     'list.noResults': 'Ничего не найдено по этим фильтрам.',
