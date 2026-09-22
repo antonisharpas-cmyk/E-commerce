@@ -9,6 +9,7 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { BRAND, LOCALES, isLocale, type Locale } from '@/config/brand'
+import { assertSchemaReady } from '@/db/ready'
 import { getCategoryTree } from '@/lib/catalog'
 import { getCartCount, getOrCreateCart } from '@/lib/cart'
 import { getCurrentUser, readCartToken } from '@/lib/auth/session'
@@ -61,6 +62,10 @@ export default async function LocaleLayout({
   const { locale: raw } = await params
   if (!isLocale(raw)) notFound()
   const locale = raw as Locale
+
+  /* Fail with the two commands to run, rather than with a page of SQL, when
+     the database is connected but has no tables yet. */
+  await assertSchemaReady()
 
   /* These three reads happen once per page render, in parallel. */
   const [categories, user, cartToken] = await Promise.all([
