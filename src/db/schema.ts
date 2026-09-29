@@ -727,7 +727,10 @@ export const heroBanners = pgTable(
     subtitle: jsonb('subtitle').$type<Record<string, string>>(),
     imageUrl: text('image_url'),
     mobileImageUrl: text('mobile_image_url'),
+    /* A muted loop that plays over the image; the image stays as its poster
+       (first paint, reduced motion, Save-Data). Portrait cut for phones. */
     videoUrl: text('video_url'),
+    mobileVideoUrl: text('mobile_video_url'),
     /* Up to two CTAs — "SHOP MEN" / "SHOP WOMEN". */
     primaryCtaLabel: jsonb('primary_cta_label').$type<Record<string, string>>(),
     primaryCtaHref: varchar('primary_cta_href', { length: 300 }),

@@ -45,7 +45,7 @@ import {
   wishlistItems,
   wishlists,
 } from '../src/db/schema'
-import { artUrl } from './art-manifest'
+import { artUrl, categoryArtUrl, heroArtUrl, heroVideoUrl } from './art-manifest'
 import { hashPassword } from '../src/lib/auth/password'
 import { seedMissingSettings } from '../src/lib/settings'
 
@@ -426,7 +426,7 @@ async function main() {
           slug: child.slug,
           name: child.name,
           position: childIndex,
-          imageUrl: `/products/category-${root.slug}-${child.slug}.svg`,
+          imageUrl: categoryArtUrl(`${root.slug}-${child.slug}`),
           isActive: true,
         })
         .returning({ id: categories.id })
@@ -623,8 +623,10 @@ async function main() {
     /* No text in the hero artwork: the headline is a real <h1> over the top of
        it, and a label baked into the image collides with it. Real photography
        replaces these in the admin panel without a deploy. */
-    imageUrl: heroPlaceholder(1600, 1000),
-    mobileImageUrl: heroPlaceholder(800, 1200),
+    imageUrl: heroArtUrl('hero') ?? heroPlaceholder(1600, 1000),
+    mobileImageUrl: heroArtUrl('hero-mobile') ?? heroPlaceholder(800, 1200),
+    videoUrl: heroVideoUrl('hero'),
+    mobileVideoUrl: heroVideoUrl('hero-mobile'),
     primaryCtaLabel: { en: 'Shop Men', el: 'Άνδρες', ru: 'Мужчины' },
     primaryCtaHref: '/men',
     secondaryCtaLabel: { en: 'Shop Women', el: 'Γυναίκες', ru: 'Женщины' },

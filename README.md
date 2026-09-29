@@ -4,7 +4,8 @@ A fashion e-commerce platform: Next.js 16 (App Router) + TypeScript + Tailwind,
 PostgreSQL via Drizzle, three languages (EN / EL / RU).
 
 Running the shop day to day — signing in as an admin, stock, prices, settings —
-is in **[ADMIN.md](ADMIN.md)**.
+is in **[ADMIN.md](ADMIN.md)**. The photographs the shop is waiting for, and
+exactly what to name them, are in **[IMAGES.md](IMAGES.md)**.
 
 Brand name, address and legal details live in **`src/config/brand.ts`** — it is
 currently a placeholder (`ATELIER`, `TODO` company details) and is the one file
@@ -12,23 +13,38 @@ to edit when the real name is decided.
 
 ## Running it
 
-You need a PostgreSQL. If you have one, put its URL in `.env.local`. If you do
-not, and would rather not install one, the project ships with an embedded
-PostgreSQL that runs from `node_modules`:
+A fresh clone runs with no configuration: the committed `.env.development`
+already points at the embedded PostgreSQL that ships in `node_modules`, so
+there is no dotfile to write by hand before anything works.
 
 ```bash
 npm install
-npm run db:local                  # terminal 1 — leave it running
+npm run dev                       # http://localhost:3100
 ```
 
-It prints the two lines to put in `.env.local`. Then, in a second terminal:
+That is the whole thing. `npm run dev` checks whether anything is listening
+where `DATABASE_URL` points; if nothing is, it starts the embedded PostgreSQL
+itself, applies the schema and seeds the catalogue on the first run, and then
+starts Next. Ctrl+C stops both. Nothing to keep open in a second window, and no
+order to remember.
+
+The individual steps are still there when you want them:
 
 ```bash
-npm run db:check                  # confirms the connection before anything else
+npm run db:local                  # just the database, in its own terminal
+npm run db:check                  # configuration → connection → schema → data
 npm run db:push                   # schema + CHECK constraints + indexes
 npm run db:seed                   # 20 categories, 12 products, 80 variants
-npm run dev                       # http://localhost:3000
+npm run dev:next                  # just Next, against a database you started
 ```
+
+If port 3100 is taken: `$env:PORT=3200; npm run dev` on PowerShell,
+`PORT=3200 npm run dev` elsewhere.
+
+To use a PostgreSQL of your own instead — an installed one, Render, Neon —
+create `.env.local` and put its `DATABASE_URL` there. `.env.local` is ignored by
+git and overrides every value in `.env.development`, which is only ever loaded
+in development and holds nothing secret.
 
 `db:local` is real PostgreSQL 18 compiled to WebAssembly (PGlite), speaking the
 normal wire protocol on a TCP port — the application cannot tell the difference

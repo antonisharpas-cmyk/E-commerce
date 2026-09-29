@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3100",
+    "dev": "tsx scripts/dev.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -21,7 +21,9 @@
     "db:local": "tsx scripts/local-db.ts",
     "check:auth": "tsx scripts/auth-check.ts",
     "art": "tsx scripts/generate-art.ts",
-    "check:admin": "tsx scripts/admin-check.ts"
+    "check:admin": "tsx scripts/admin-check.ts",
+    "dev:next": "next dev -p 3100",
+    "media:sync": "tsx scripts/sync-media.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

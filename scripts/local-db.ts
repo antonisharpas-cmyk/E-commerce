@@ -80,14 +80,16 @@ async function main() {
   }
 
   console.log(`\n  listening on ${HOST}:${PORT} (up to ${MAX_CONNECTIONS} connections)\n`)
-  console.log('  Put this in .env.local:\n')
-  console.log(`      DATABASE_URL="postgresql://postgres@${HOST}:${PORT}/postgres"`)
-  console.log('      DATABASE_POOL_MAX=1\n')
-  console.log('  Then, in a SECOND terminal:\n')
-  console.log('      npm run db:push')
-  console.log('      npm run db:seed')
-  console.log('      npm run dev\n')
-  console.log('  Leave this window open. Ctrl+C to stop.\n')
+
+  /* When `npm run dev` started this, it owns the lifecycle and the advice below
+     would be wrong — there is no window of its own to leave open. */
+  if (!process.env.LOCAL_DB_SUPERVISED) {
+    console.log(`      DATABASE_URL="postgresql://postgres@${HOST}:${PORT}/postgres"`)
+    console.log('\n  Leave this window open — closing it stops the database, and')
+    console.log('  the site will not load without it. Ctrl+C to stop.\n')
+    console.log('  You do not normally need this window at all: `npm run dev`')
+    console.log('  starts this database itself if nothing is already running.\n')
+  }
 
   /* Close the engine cleanly so the data directory is not left mid-write. */
   let closing = false

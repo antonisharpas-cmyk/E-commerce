@@ -17,6 +17,18 @@ export function artDir() {
   return join(process.cwd(), 'public', 'products')
 }
 
+export function heroDir() {
+  return join(process.cwd(), 'public', 'hero')
+}
+
+/** The first of these that exists in `dir`, as a public URL under `base`. */
+function firstPhoto(dir: string, base: string, name: string): string | null {
+  for (const ext of PHOTO_EXTENSIONS) {
+    if (existsSync(join(dir, `${name}${ext}`))) return `${base}/${name}${ext}`
+  }
+  return null
+}
+
 export type ArtItem = {
   slug: string
   kind: GarmentKind
@@ -68,18 +80,39 @@ export const CATEGORY_TILES: { key: string; kind: GarmentKind; colors: [string, 
 export function artUrl(slug: string, back = false): string {
   const dir = artDir()
   if (!back) {
-    for (const ext of PHOTO_EXTENSIONS) {
-      if (existsSync(join(dir, `${slug}${ext}`))) return `/products/${slug}${ext}`
-    }
-  } else {
-    for (const ext of PHOTO_EXTENSIONS) {
-      if (existsSync(join(dir, `${slug}-back${ext}`))) return `/products/${slug}-back${ext}`
-    }
-    /* No second photograph? Show the one there is rather than a drawing that
-       does not match it. */
-    for (const ext of PHOTO_EXTENSIONS) {
-      if (existsSync(join(dir, `${slug}${ext}`))) return `/products/${slug}${ext}`
-    }
+    return firstPhoto(dir, '/products', slug) ?? `/products/${slug}.svg`
   }
-  return `/products/${slug}${back ? '-back' : ''}.svg`
+  /* No second photograph? Show the one there is rather than a drawing that
+     does not match it. */
+  return (
+    firstPhoto(dir, '/products', `${slug}-back`) ??
+    firstPhoto(dir, '/products', slug) ??
+    `/products/${slug}-back.svg`
+  )
+}
+
+/**
+ * The homepage tile for a category, e.g. `men-hoodies`. Same rule as products:
+ * drop `public/products/category-men-hoodies.jpg` in and it wins.
+ */
+export function categoryArtUrl(key: string): string {
+  return firstPhoto(artDir(), '/products', `category-${key}`) ?? `/products/category-${key}.svg`
+}
+
+/**
+ * The hero banner. `public/hero/hero.jpg` (wide) and `public/hero/hero-mobile.jpg`
+ * (tall) replace the generated gradient. Returns null when neither exists, so
+ * the seed can fall back to the gradient it draws itself.
+ */
+export function heroArtUrl(which: 'hero' | 'hero-mobile'): string | null {
+  return firstPhoto(heroDir(), '/hero', which)
+}
+
+/** The hero loop, when `public/hero/hero.mp4` (and optionally
+ *  `hero-mobile.mp4`) exist. Null means the hero is a still image. */
+export function heroVideoUrl(which: 'hero' | 'hero-mobile'): string | null {
+  for (const ext of ['.mp4', '.webm']) {
+    if (existsSync(join(heroDir(), `${which}${ext}`))) return `/hero/${which}${ext}`
+  }
+  return null
 }

@@ -10,6 +10,7 @@
 import Link from 'next/link'
 import { and, desc, eq, isNull, lte, or, sql } from 'drizzle-orm'
 import { db } from '@/db'
+import { assertSchemaReady } from '@/db/ready'
 import { heroBanners, promotions } from '@/db/schema'
 import { BRAND, isLocale, type Locale } from '@/config/brand'
 import { getTranslator } from '@/i18n/messages'
@@ -18,6 +19,8 @@ import { getSetting } from '@/lib/settings'
 import { formatMoney } from '@/lib/pricing'
 import { ProductCard } from '@/components/ProductCard'
 import { ProductMarquee } from '@/components/ProductMarquee'
+import { HeroMedia } from '@/components/HeroMedia'
+import { videoSources } from '@/lib/media'
 import { SectionHead } from '@/components/ui'
 
 export const revalidate = 60
@@ -87,6 +90,11 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const t = getTranslator(locale)
   const base = `/${locale}`
 
+  /* The layout checks this too, but a page renders in parallel with its
+     layout — without waiting here, the hero query can run first and fail on
+     a column a pending migration is about to add. */
+  await assertSchemaReady()
+
   const [hero, promo, categories, newIn, onSale, popular, threshold] = await Promise.all([
     getHero(),
     getHomepagePromotion(),
@@ -103,16 +111,15 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       {/* ---------------------------------------------------------- hero --- */}
       {hero && (
         <section className="relative">
-          <div className="relative min-h-[62vh] overflow-hidden bg-ink md:min-h-[78vh]">
+          <div className="relative min-h-[70vh] overflow-hidden bg-ink md:min-h-[82vh]">
             {hero.videoUrl ? (
-              <video
-                src={hero.videoUrl}
-                poster={hero.imageUrl ?? undefined}
-                autoPlay
-                muted
-                loop
-                playsInline
-                className="absolute inset-0 h-full w-full object-cover"
+              <HeroMedia
+                video={videoSources(hero.videoUrl)}
+                mobileVideo={videoSources(hero.mobileVideoUrl)}
+                poster={hero.imageUrl}
+                mobilePoster={hero.mobileImageUrl}
+                pauseLabel={t('home.heroPause')}
+                playLabel={t('home.heroPlay')}
               />
             ) : (
               hero.imageUrl && (
@@ -120,28 +127,33 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
                 <img
                   src={hero.imageUrl}
                   alt=""
+                  fetchPriority="high"
                   className="absolute inset-0 h-full w-full object-cover"
                 />
               )
             )}
 
-            <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-transparent" />
+            {/* Legibility. Desktop reads left to right, so the shade sits under
+                the words on the left and clears before the subject; on a phone
+                the words sit at the bottom, so the shade rises from there. */}
+            <div className="pointer-events-none absolute inset-0 hidden bg-gradient-to-r from-black/60 via-black/25 to-transparent md:block" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/15 to-transparent md:hidden" />
 
-            <div className="container-x relative flex min-h-[62vh] items-end pb-14 md:min-h-[78vh] md:items-center md:pb-0">
+            <div className="container-x relative z-10 flex min-h-[70vh] items-end pb-16 md:min-h-[82vh] md:items-center md:pb-0">
               <div className="max-w-xl text-paper">
-                <h1 className="text-[clamp(2.2rem,6vw,4.5rem)] leading-[0.98] font-semibold tracking-tight">
+                <h1 className="hero-rise hero-rise-1 text-[clamp(2.4rem,6.4vw,5rem)] leading-[0.96] font-semibold tracking-tight">
                   {tr(hero.title, locale)}
                 </h1>
                 {hero.subtitle && (
-                  <p className="mt-4 max-w-md text-[15px] text-white/85 md:text-base">
+                  <p className="hero-rise hero-rise-2 mt-5 max-w-md text-[15px] text-white/85 md:text-base">
                     {tr(hero.subtitle, locale)}
                   </p>
                 )}
-                <div className="mt-8 flex flex-wrap gap-3">
+                <div className="hero-rise hero-rise-3 mt-8 flex flex-wrap gap-3">
                   {hero.primaryCtaLabel && hero.primaryCtaHref && (
                     <Link
                       href={`${base}${hero.primaryCtaHref}`}
-                      className="inline-flex items-center bg-paper px-7 py-4 label text-ink hover:opacity-90"
+                      className="inline-flex items-center bg-paper px-7 py-4 label text-ink transition hover:opacity-90"
                     >
                       {tr(hero.primaryCtaLabel, locale)}
                     </Link>
@@ -149,7 +161,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
                   {hero.secondaryCtaLabel && hero.secondaryCtaHref && (
                     <Link
                       href={`${base}${hero.secondaryCtaHref}`}
-                      className="inline-flex items-center border border-paper px-7 py-4 label text-paper hover:bg-paper hover:text-ink"
+                      className="inline-flex items-center border border-paper px-7 py-4 label text-paper transition hover:bg-paper hover:text-ink"
                     >
                       {tr(hero.secondaryCtaLabel, locale)}
                     </Link>

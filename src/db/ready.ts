@@ -7,14 +7,31 @@
  * "connection refused") buried underneath and often truncated by the error
  * overlay.
  *
- * Two distinct failures, two distinct messages:
- *   - cannot reach the server at all  -> DatabaseUnreachableError
- *   - reached it, but it has no tables -> SchemaNotReadyError
+ * Three distinct failures, three distinct messages:
+ *   - cannot reach the server at all       -> DatabaseUnreachableError
+ *   - reached it, but it has no tables      -> SchemaNotReadyError
+ *   - has tables, but is behind the code    -> SchemaOutOfDateError
+ *
+ * The third is the one that bites during development: new code arrives (a
+ * pull, a delivered change, a hot reload) that reads a column the database
+ * has not been given yet, and the page dies with "Failed query: select …".
+ * On this machine's own database, in development, the missing updates are
+ * simply applied — the same idempotent migrations `npm run db:push` runs —
+ * and the page renders. Anywhere else it stops with the command to run,
+ * because changing a remote schema is a decision, not a side effect.
  * ========================================================================== */
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { sql } from 'drizzle-orm'
+import { migrate } from 'drizzle-orm/node-postgres/migrator'
+import journal from '../../drizzle/meta/_journal.json'
 import { db } from './index'
 import { describeConnection } from './ssl'
+import { syncMedia } from '@/lib/media-sync'
+
+/** How many migrations this version of the code expects to have been applied. */
+const EXPECTED_MIGRATIONS = journal.entries.length
 
 export class SchemaNotReadyError extends Error {
   constructor(missing: string) {
@@ -25,6 +42,20 @@ export class SchemaNotReadyError extends Error {
         '    npm run db:seed\n',
     )
     this.name = 'SchemaNotReadyError'
+  }
+}
+
+export class SchemaOutOfDateError extends Error {
+  constructor(applied: number, expected: number) {
+    const behind = expected - applied
+    super(
+      `The database is ${behind} update${behind === 1 ? '' : 's'} behind the code ` +
+        `(${applied} of ${expected} applied).\n\n` +
+        'Apply them — nothing is deleted:\n\n' +
+        '    npm run db:push\n\n' +
+        'On your own machine, restarting `npm run dev` does this for you.\n',
+    )
+    this.name = 'SchemaOutOfDateError'
   }
 }
 
@@ -43,8 +74,8 @@ function adviceFor(code: string | undefined, message: string, isLocal: boolean):
   if (code === 'ECONNREFUSED') {
     return isLocal
       ? 'Nothing is listening on that port. If you are using the embedded database,\n' +
-          'the `npm run db:local` terminal has to stay open — start it and leave it\n' +
-          'running, then reload this page. If you installed PostgreSQL yourself,\n' +
+          'start the site with `npm run dev` — it starts the database for you — and\n' +
+          'reload this page. If you installed PostgreSQL yourself,\n' +
           'start its service:  Start-Service postgresql-x64-17'
       : 'Nothing is listening there. Check the database is running in your\n' +
           'provider\'s dashboard.'
@@ -73,7 +104,14 @@ function adviceFor(code: string | undefined, message: string, isLocal: boolean):
   return 'Check DATABASE_URL in .env.local.'
 }
 
-const globalForReady = globalThis as unknown as { __schemaReady?: Promise<void> }
+/* Kept on globalThis because dev-mode hot reloads re-evaluate this module.
+   Keyed by the migration count the code expects: when new code arrives with a
+   new migration, the old "all good" answer no longer applies and the check
+   runs again — which is precisely the moment it matters. */
+const globalForReady = globalThis as unknown as {
+  __schemaReady?: Promise<void>
+  __schemaReadyFor?: number
+}
 
 async function check(): Promise<void> {
   const url = process.env.DATABASE_URL ?? ''
@@ -104,6 +142,47 @@ async function check(): Promise<void> {
   }
 
   if (!result.rows[0]?.exists) throw new SchemaNotReadyError('categories')
+
+  const selfHeal = process.env.NODE_ENV === 'development' && isLocal
+
+  /* --- is it as new as the code? --- */
+  const applied = await appliedMigrations()
+  if (applied !== null && applied < EXPECTED_MIGRATIONS) {
+    if (!selfHeal) throw new SchemaOutOfDateError(applied, EXPECTED_MIGRATIONS)
+
+    await migrate(db, { migrationsFolder: join(process.cwd(), 'drizzle') })
+    /* The hand-written CHECK constraints travel with every migration run. */
+    await db.execute(sql.raw(readFileSync(join(process.cwd(), 'src/db/constraints.sql'), 'utf8')))
+    console.log(
+      `\n  ✓ database updated — applied ${EXPECTED_MIGRATIONS - applied} pending migration(s)`,
+    )
+  }
+
+  /* --- and pointing at the pictures that are actually in /public? ---
+     New photographs or a new hero video arrive as files; without this they
+     would sit unused until someone re-seeded (and wiped the accounts). */
+  if (selfHeal) {
+    try {
+      const changed = await syncMedia(db)
+      if (changed) console.log(`  ✓ media — ${changed} picture link(s) updated\n`)
+    } catch (err) {
+      /* Pictures are not worth refusing to render the shop over. */
+      console.warn('  ! media sync skipped:', err instanceof Error ? err.message : err)
+    }
+  }
+}
+
+/** Rows in drizzle's own bookkeeping table, or null when it is absent (a
+ *  database built some other way, whose history cannot be read). */
+async function appliedMigrations(): Promise<number | null> {
+  const exists = await db.execute<{ exists: boolean }>(
+    sql`select to_regclass('drizzle.__drizzle_migrations') is not null as exists`,
+  )
+  if (!exists.rows[0]?.exists) return null
+  const counted = await db.execute<{ n: number }>(
+    sql`select count(*)::int as n from drizzle.__drizzle_migrations`,
+  )
+  return Number(counted.rows[0]?.n ?? 0)
 }
 
 /** Resolves once the database is reachable and migrated; throws a readable
@@ -112,7 +191,8 @@ export function assertSchemaReady(): Promise<void> {
   /* Cache the successful answer only. A failed check must be retried, so that
      starting the database or running the migrations and refreshing the page is
      enough — no server restart. */
-  if (!globalForReady.__schemaReady) {
+  if (!globalForReady.__schemaReady || globalForReady.__schemaReadyFor !== EXPECTED_MIGRATIONS) {
+    globalForReady.__schemaReadyFor = EXPECTED_MIGRATIONS
     globalForReady.__schemaReady = check().catch((err) => {
       globalForReady.__schemaReady = undefined
       throw err

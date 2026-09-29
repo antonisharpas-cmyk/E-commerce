@@ -38,6 +38,8 @@ export const messages = {
     'home.categories': 'Shop by category',
     'home.trending': 'Moving fast',
     'home.trendingSub': 'What people are looking at right now.',
+    'home.heroPause': 'Pause background video',
+    'home.heroPlay': 'Play background video',
 
     /* --- listing --- */
     'list.results': 'one:{n} product|other:{n} products',
@@ -187,6 +189,8 @@ export const messages = {
     'home.categories': 'Αγορά ανά κατηγορία',
     'home.trending': 'Φεύγουν γρήγορα',
     'home.trendingSub': 'Αυτά που βλέπουν όλοι αυτή τη στιγμή.',
+    'home.heroPause': 'Παύση βίντεο φόντου',
+    'home.heroPlay': 'Αναπαραγωγή βίντεο φόντου',
 
     'list.results': 'one:{n} προϊόν|other:{n} προϊόντα',
     'list.noResults': 'Κανένα προϊόν με αυτά τα φίλτρα.',
@@ -329,6 +333,8 @@ export const messages = {
     'home.categories': 'По категориям',
     'home.trending': 'Разбирают быстро',
     'home.trendingSub': 'То, что смотрят прямо сейчас.',
+    'home.heroPause': 'Приостановить фоновое видео',
+    'home.heroPlay': 'Воспроизвести фоновое видео',
 
     'list.results': 'one:{n} товар|few:{n} товара|many:{n} товаров|other:{n} товара',
     'list.noResults': 'Ничего не найдено по этим фильтрам.',

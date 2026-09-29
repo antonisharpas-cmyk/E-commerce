@@ -16,8 +16,9 @@ const connectionString = process.env.DATABASE_URL
 
 if (!connectionString) {
   throw new Error(
-    'DATABASE_URL is not set. Copy .env.example to .env.local and fill it in ' +
-      '(see README → Database).',
+    'DATABASE_URL is not set. For local development the committed .env.development ' +
+      'supplies one; otherwise copy .env.example to .env.local and fill it in ' +
+      '(see README → Running it).',
   )
 }
 
