@@ -67,6 +67,14 @@ export const promotionScopeEnum = pgEnum('promotion_scope', [
 
 export const deliveryKindEnum = pgEnum('delivery_kind', ['PICKUP', 'SHIPPING'])
 
+/* Whether a VISIBLE product can be bought. Separate from `isActive` on
+   purpose: hidden means "not in the shop", sold out means "in the shop, not
+   purchasable right now". An enum rather than a flag, so later states (pre-
+   order, coming soon) are a new value, not a new column. Stock still decides
+   on its own: a product with nothing on the shelf is sold out whatever this
+   says — this lets the owner declare it before the shelf is empty. */
+export const productAvailabilityEnum = pgEnum('product_availability', ['AVAILABLE', 'SOLD_OUT'])
+
 export const reservationStatusEnum = pgEnum('reservation_status', [
   'ACTIVE', // holding stock, will expire
   'CONSUMED', // converted into a paid order line
@@ -109,6 +117,8 @@ export const users = pgTable(
     /* Soft-disable rather than delete, so historical orders keep their customer. */
     isActive: boolean('is_active').notNull().default(true),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    /* The language the customer registered in — every email to them uses it. */
+    locale: varchar('locale', { length: 5 }).notNull().default('en'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -262,6 +272,7 @@ export const products = pgTable(
     /* Free-text search vector maintained by a trigger — see constraints.sql */
     searchText: text('search_text'),
     isActive: boolean('is_active').notNull().default(false),
+    availability: productAvailabilityEnum('availability').notNull().default('AVAILABLE'),
     publishedAt: timestamp('published_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -746,6 +757,53 @@ export const heroBanners = pgTable(
   (t) => [index('hero_active_window_idx').on(t.isActive, t.startsAt, t.endsAt)],
 )
 
+/* ------------------------------------------------------ homepage layout -- */
+/* The four product/category sections below the hero, arranged by the shop
+   owner in the admin panel: their order, whether each is shown, and — per
+   section — whether the shop fills it automatically (newest, most viewed,
+   reduced) or shows exactly the items the owner picked, in their order.
+
+   A missing row means "the default": this table only needs a row once the
+   owner has changed something, so a fresh database needs no setup step. */
+
+export const homepageSectionKeyEnum = pgEnum('homepage_section_key', [
+  'categories',
+  'trending',
+  'new_in',
+  'on_sale',
+  'newsletter',
+])
+
+export const homepageSectionModeEnum = pgEnum('homepage_section_mode', ['auto', 'manual'])
+
+export const homepageSections = pgTable('homepage_sections', {
+  key: homepageSectionKeyEnum('key').primaryKey(),
+  position: integer('position').notNull(),
+  isVisible: boolean('is_visible').notNull().default(true),
+  mode: homepageSectionModeEnum('mode').notNull().default('auto'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/* The hand-picked contents of a section in manual mode. A product section
+   holds products, the category section holds categories — never both, and
+   never the wrong kind (see constraints.sql). Deleting a product or category
+   removes it from every section rather than leaving a hole. */
+export const homepageSectionItems = pgTable(
+  'homepage_section_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    sectionKey: homepageSectionKeyEnum('section_key').notNull(),
+    productId: uuid('product_id').references(() => products.id, { onDelete: 'cascade' }),
+    categoryId: uuid('category_id').references(() => categories.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+  },
+  (t) => [
+    index('homepage_items_section_position_idx').on(t.sectionKey, t.position),
+    uniqueIndex('homepage_items_section_product_uq').on(t.sectionKey, t.productId),
+    uniqueIndex('homepage_items_section_category_uq').on(t.sectionKey, t.categoryId),
+  ],
+)
+
 export const deliveryOptions = pgTable(
   'delivery_options',
   {
@@ -935,3 +993,249 @@ export type Setting = typeof settings.$inferSelect
 export type OrderStatus = (typeof orderStatusEnum.enumValues)[number]
 export type PaymentStatus = (typeof paymentStatusEnum.enumValues)[number]
 export type UserRole = (typeof userRoleEnum.enumValues)[number]
+
+/* ------------------------------------------------------------- newsletter -- */
+/* Who asked to hear about new arrivals. The CURRENT state lives here; the
+   history of every yes and no lives in `marketing_consents`, which is the
+   record that proves consent.
+
+   Double opt-in: a signup is PENDING until the person clicks the link emailed
+   to them. Nobody can subscribe someone else's address, and nothing marketing
+   is ever sent to a PENDING or UNSUBSCRIBED row. */
+
+export const subscriberStatusEnum = pgEnum('subscriber_status', [
+  'PENDING',
+  'SUBSCRIBED',
+  'UNSUBSCRIBED',
+])
+
+export const newsletterSubscribers = pgTable(
+  'newsletter_subscribers',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    email: varchar('email', { length: 255 }).notNull(),
+    firstName: varchar('first_name', { length: 80 }),
+    locale: varchar('locale', { length: 5 }).notNull().default('en'),
+    status: subscriberStatusEnum('status').notNull().default('PENDING'),
+    /* 'homepage' | 'footer' | 'registration' | 'announcement' — where they said yes. */
+    source: varchar('source', { length: 40 }).notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    consentAt: timestamp('consent_at', { withTimezone: true }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    unsubscribedAt: timestamp('unsubscribed_at', { withTimezone: true }),
+    /* Throttles re-sending the confirmation email to one address. */
+    lastConfirmationSentAt: timestamp('last_confirmation_sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('newsletter_email_unique').on(sql`lower(${t.email})`),
+    index('newsletter_status_idx').on(t.status),
+  ],
+)
+
+/* One row per mailing, so a double-click cannot send it twice and the owner
+   can see what went out, to how many, and when. */
+export const newsletterCampaigns = pgTable('newsletter_campaigns', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  /* 'new_arrivals' | 'promotion' */
+  kind: varchar('kind', { length: 40 }).notNull(),
+  subject: varchar('subject', { length: 200 }).notNull(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  recipientCount: integer('recipient_count').notNull().default(0),
+  sentCount: integer('sent_count').notNull().default(0),
+  failedCount: integer('failed_count').notNull().default(0),
+  /* Recipients left out because another marketing email reached them too
+     recently (frequency protection). */
+  skippedCount: integer('skipped_count').notNull().default(0),
+  /* 'SCHEDULED' | 'SENDING' | 'SENT' | 'CANCELLED' */
+  status: varchar('status', { length: 16 }).notNull().default('SENDING'),
+  /* What the owner wrote and chose: message, products or a category, the
+     call to action, a promotion code, the language. See CampaignDraft. */
+  content: jsonb('content').$type<Record<string, unknown>>(),
+  /* When to send; null = straight away. */
+  scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+})
+
+/* ------------------------------------------------------- customer service -- */
+/* A conversation between one customer and "the shop". The customer always
+   sees the shop's name, never which staff member replied — that is kept, for
+   the owner, in `staffUserId`, and never sent to the customer.
+
+   Ownership: a signed-in customer owns it by `userId`; a guest by a random
+   token in an httpOnly cookie, of which only the hash is stored here. */
+
+export const supportStatusEnum = pgEnum('support_status', ['OPEN', 'CLOSED'])
+export const supportSenderEnum = pgEnum('support_sender', ['CUSTOMER', 'STAFF'])
+export const supportCloseReasonEnum = pgEnum('support_close_reason', [
+  'STAFF',
+  'INACTIVITY',
+])
+
+export const supportConversations = pgTable(
+  'support_conversations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    guestTokenHash: varchar('guest_token_hash', { length: 64 }),
+    name: varchar('name', { length: 120 }),
+    email: varchar('email', { length: 255 }),
+    locale: varchar('locale', { length: 5 }).notNull().default('en'),
+    /* The page they were on when they asked — "do you have this in black?"
+       means nothing without it. */
+    pageUrl: varchar('page_url', { length: 500 }),
+    status: supportStatusEnum('status').notNull().default('OPEN'),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
+    /* Moves on every message from either side — and only on messages. The
+       inactivity close is measured from here. */
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).notNull().defaultNow(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    closedReason: supportCloseReasonEnum('closed_reason'),
+    closedBy: uuid('closed_by').references(() => users.id, { onDelete: 'set null' }),
+    /* Read markers: a message is "read" by the other side once it is older
+       than their marker — one timestamp per side instead of one per message. */
+    staffLastReadAt: timestamp('staff_last_read_at', { withTimezone: true }),
+    customerLastReadAt: timestamp('customer_last_read_at', { withTimezone: true }),
+    notifiedAt: timestamp('notified_at', { withTimezone: true }),
+    transcriptSentAt: timestamp('transcript_sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('support_status_activity_idx').on(t.status, t.lastActivityAt),
+    index('support_user_idx').on(t.userId),
+    index('support_guest_idx').on(t.guestTokenHash),
+  ],
+)
+
+export const supportMessages = pgTable(
+  'support_messages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => supportConversations.id, { onDelete: 'cascade' }),
+    sender: supportSenderEnum('sender').notNull(),
+    /* Internal only — which staff member wrote it. Never sent to customers. */
+    staffUserId: uuid('staff_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /* The automatic first reply ("Thank you for contacting…"), not a person. */
+    automated: boolean('automated').notNull().default(false),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('support_messages_conversation_idx').on(t.conversationId, t.createdAt)],
+)
+
+/* ----------------------------------------------------------------- email -- */
+/* Every email the shop tries to send: what, to whom, and whether it went.
+   Feeds "failed emails" on the admin overview. The body is kept only when no
+   provider is configured (development), so it can be read and tested; with a
+   real provider, only the envelope is stored. */
+export const emailLog = pgTable(
+  'email_log',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    /* 'support_new' | 'support_transcript' | 'newsletter_confirm' | … */
+    kind: varchar('kind', { length: 40 }).notNull(),
+    /* 'transactional' | 'lifecycle' | 'marketing' — never mixed: marketing needs consent. */
+    category: varchar('category', { length: 16 }).notNull(),
+    toEmail: varchar('to_email', { length: 255 }).notNull(),
+    subject: varchar('subject', { length: 300 }).notNull(),
+    /* 'sent' | 'failed' | 'logged' (no provider — written here instead) */
+    status: varchar('status', { length: 16 }).notNull(),
+    error: text('error'),
+    body: text('body'),
+    relatedId: varchar('related_id', { length: 64 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('email_log_created_idx').on(t.createdAt),
+    index('email_log_related_idx').on(t.relatedId),
+    index('email_log_to_idx').on(sql`lower(${t.toEmail})`, t.createdAt),
+  ],
+)
+
+/* ------------------------------------------------------ email templates -- */
+/* The owner's edits to the built-in email templates (src/lib/email-templates.ts).
+   One row per template that has been changed; anything not stored here — a
+   language never edited, a template never touched — uses the built-in text.
+   So new templates need no data migration, and "reset" is deleting the row. */
+export const emailTemplates = pgTable('email_templates', {
+  key: varchar('key', { length: 60 }).primaryKey(),
+  /* Null = the template's own default. Required templates ignore false. */
+  enabled: boolean('enabled'),
+  /* Minutes after the trigger, for templates with timing. */
+  delayMinutes: integer('delay_minutes'),
+  /* { en: { subject, body, cta }, el: …, ru: … } — any part may be missing. */
+  content: jsonb('content').$type<Record<string, { subject?: string; body?: string; cta?: string }>>(),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/* ---------------------------------------------------------- email jobs -- */
+/* Every automated email the shop decides to send — or decides not to — with
+   why. It is the queue (status SCHEDULED, due at scheduledAt), and it is the
+   automation log the admin reads: "Abandoned bag · Maria · triggered 14:00 ·
+   scheduled 18:00 · sent" or "… · skipped: bought it in the meantime". */
+export const emailJobStatusEnum = pgEnum('email_job_status', ['SCHEDULED', 'SENT', 'SKIPPED', 'CANCELLED', 'FAILED'])
+
+export const emailJobs = pgTable(
+  'email_jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    /* The template / automation key: 'welcome', 'abandoned_bag', 'order_shipped' … */
+    automation: varchar('automation', { length: 60 }).notNull(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    email: varchar('email', { length: 255 }).notNull(),
+    recipientName: varchar('recipient_name', { length: 160 }),
+    locale: varchar('locale', { length: 5 }).notNull().default('en'),
+    /* What the email is about: { cartId }, { orderId }, { variantId } … */
+    context: jsonb('context').$type<Record<string, unknown>>().notNull().default({}),
+    /* One job per thing that should only ever be emailed once —
+       'order:<id>:shipped', 'abandoned_bag:<cart>:<episode>'. */
+    dedupeKey: varchar('dedupe_key', { length: 160 }),
+    status: emailJobStatusEnum('status').notNull().default('SCHEDULED'),
+    /* When the thing happened, when the email is due, when it was handled. */
+    triggeredAt: timestamp('triggered_at', { withTimezone: true }).notNull().defaultNow(),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+    /* Plain words: why it was triggered, and why it was skipped or failed. */
+    reason: text('reason'),
+    outcome: text('outcome'),
+    subject: varchar('subject', { length: 300 }),
+    emailLogId: uuid('email_log_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('email_jobs_dedupe_unique').on(t.dedupeKey),
+    index('email_jobs_due_idx').on(t.status, t.scheduledAt),
+    index('email_jobs_user_idx').on(t.userId),
+    index('email_jobs_created_idx').on(t.createdAt),
+  ],
+)
+
+/* -------------------------------------------------------- stock alerts -- */
+/* "Notify me when it's back" requests — the storage and the trigger are in
+   place (lib/automations.ts, backInStock); the button customers press is not
+   built yet, so nothing writes here until it is. */
+export const stockAlerts = pgTable(
+  'stock_alerts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    variantId: uuid('variant_id')
+      .notNull()
+      .references(() => productVariants.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    email: varchar('email', { length: 255 }).notNull(),
+    locale: varchar('locale', { length: 5 }).notNull().default('en'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    notifiedAt: timestamp('notified_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('stock_alerts_variant_email_unique').on(t.variantId, sql`lower(${t.email})`),
+    index('stock_alerts_pending_idx').on(t.variantId, t.notifiedAt),
+  ],
+)

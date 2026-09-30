@@ -9,7 +9,7 @@
  * the 30 products in the seed and falls over at 3,000.
  * ========================================================================== */
 
-import { and, asc, desc, eq, exists, gte, inArray, isNotNull, lte, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or, sql, type SQL } from 'drizzle-orm'
 import { db } from '@/db'
 import {
   categories,
@@ -20,8 +20,8 @@ import {
   type Category,
 } from '@/db/schema'
 import {
+  effectivePriceSql,
   loadActivePromotions,
-  promotionScope,
   resolvePrices,
   type EffectivePrice,
 } from './pricing'
@@ -106,7 +106,13 @@ export type ProductCard = {
   isOnSale: boolean
   /** Sizes with stock, and all sizes, so a card can grey out sold-out sizes. */
   sizes: { size: string; variantId: string; available: number }[]
+  /** Some size has stock on the shelf. */
   inStock: boolean
+  /**
+   * Cannot be bought right now — because nothing is on the shelf, or because
+   * the owner has marked it sold out. The one flag the storefront shows.
+   */
+  soldOut: boolean
   createdAt: Date
 }
 
@@ -116,148 +122,244 @@ export type ProductListing = {
   page: number
   perPage: number
   totalPages: number
-  /** Facet data so the filter UI shows only options that exist. */
+  /** The options the filter panel offers — only ones that exist, each
+   *  counted with every other filter applied. */
   facets: {
     sizes: { size: string; count: number }[]
+    colours: { value: string; label: string; hex: string | null; count: number }[]
+    /** Subcategories: within the department on a department page, grouped
+     *  by department on pages that span them; none on a subcategory page. */
+    categories: { value: string; label: string; count: number; group?: string }[]
+    /** Only on pages that span departments. */
+    departments: { value: string; label: string; count: number }[]
+    /** What customers pay, lowest and highest, across the whole page —
+     *  the category and search, before any filter. */
     priceRange: { minCents: number; maxCents: number }
   }
 }
 
-export async function listProducts(query: ProductQuery): Promise<ProductListing> {
-  const conditions = [eq(products.isActive, true)]
+/*
+ * The listing query, built as named groups of conditions:
+ *
+ *   base        always applies: live products, the page's category, search
+ *   department  / categories / price / sale      product-level filters
+ *   sizes / colours / stock                       VARIANT-level filters
+ *
+ * Within a group the choices are OR'd; groups are AND'd. The three variant
+ * groups are checked against the SAME variant: "M + Black + in stock" means
+ * a black M that is in stock — not a black S next to a grey M.
+ *
+ * Facets (the options the filter panel offers) list what exists on the page
+ * (its category and search), each counted with every filter applied EXCEPT
+ * its own group — so choosing "M" does not make L disappear, and an option
+ * that would now show nothing is dimmed rather than removed. The price slider's range is the whole page's (category and
+ * search only), so it stays put while other filters change instead of
+ * shrinking — or vanishing — under the shopper's thumb.
+ */
 
-  /* --- category / subcategory --- */
+type Group = 'department' | 'categories' | 'price' | 'sale' | 'sizes' | 'colours' | 'stock'
+
+/* The database's version of colourKey() in listing-filters.ts. */
+const COLOUR_KEY_SQL = sql.raw(
+  `trim(both '-' from regexp_replace(lower(trim(v.color_name->>'en')), '[^a-z0-9]+', '-', 'g'))`,
+)
+
+type Built = {
+  base: SQL[]
+  product: Partial<Record<'department' | 'categories' | 'price' | 'sale', SQL>>
+  variant: Partial<Record<'sizes' | 'colours' | 'stock', SQL>>
+  price: SQL
+  scope: FacetScope
+}
+
+/** What kind of page this is decides which structural facets make sense. */
+type FacetScope =
+  | { kind: 'department'; department: Category }
+  | { kind: 'subcategory' }
+  | { kind: 'all'; department?: string }
+
+async function buildListing(query: ProductQuery): Promise<Built | null> {
+  const base: SQL[] = [sql`${products.isActive}`]
+  const product: Built['product'] = {}
+  const variant: Built['variant'] = {}
+  let scope: FacetScope = { kind: 'all' }
+
+  /* --- where on the site we are --- */
   if (query.subcategory && query.category) {
     const sub = await getCategoryBySlug(query.subcategory, query.category)
-    if (!sub) return emptyListing(query)
-    conditions.push(eq(products.categoryId, sub.id))
+    if (!sub) return null
+    base.push(sql`${products.categoryId} = ${sub.id}::uuid`)
+    scope = { kind: 'subcategory' }
   } else if (query.category) {
     const cat = await getCategoryBySlug(query.category)
-    if (!cat) return emptyListing(query)
+    if (!cat) return null
     const ids = await categoryAndDescendants(cat.id)
-    conditions.push(inArray(products.categoryId, ids))
+    base.push(sql`${products.categoryId} in (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})`)
+    scope = { kind: 'department', department: cat }
   }
 
-  /* --- search (section 6: useful results without an exact name) --- */
+  /* --- search (names in three languages, typos, parts of words, SKUs) --- */
   if (query.q) {
     const needle = query.q.trim()
-    conditions.push(
-      or(
-        /* Full-text for whole words in any of the three languages. */
-        sql`to_tsvector('simple', coalesce(${products.searchText}, '')) @@ plainto_tsquery('simple', ${needle})`,
-        /* Trigram similarity for typos and partial words. */
-        sql`coalesce(${products.searchText}, '') % ${needle}`,
-        /* Substring, so "hood" matches "hoodie" even below the trigram cutoff. */
-        sql`coalesce(${products.searchText}, '') ilike ${'%' + needle + '%'}`,
-        /* SKU lookup, for staff and for customers reading a label. */
-        exists(
-          db
-            .select({ one: sql`1` })
-            .from(productVariants)
-            .where(
-              and(
-                eq(productVariants.productId, products.id),
-                sql`${productVariants.sku} ilike ${'%' + needle + '%'}`,
-              ),
-            ),
-        ),
-      )!,
-    )
+    base.push(sql`(
+      to_tsvector('simple', coalesce(${products.searchText}, '')) @@ plainto_tsquery('simple', ${needle})
+      or coalesce(${products.searchText}, '') % ${needle}
+      or coalesce(${products.searchText}, '') ilike ${'%' + needle + '%'}
+      or exists (select 1 from product_variants sv
+                 where sv.product_id = ${products.id} and sv.sku ilike ${'%' + needle + '%'})
+    )`)
   }
 
-  /* --- price --- */
-  if (query.minPrice !== undefined) {
-    conditions.push(gte(sql`coalesce(${products.salePriceCents}, ${products.priceCents})`, query.minPrice))
+  /* --- department / categories: only where they mean something --- */
+  const tree = query.department || query.categories?.length ? await getCategoryTree() : []
+  if (query.department && scope.kind === 'all') {
+    scope = { kind: 'all', department: query.department }
+    const root = tree.find((r) => r.slug === query.department)
+    const ids = root ? [root.id, ...root.children.map((c) => c.id)] : []
+    product.department = ids.length
+      ? sql`${products.categoryId} in (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})`
+      : sql`false`
   }
-  if (query.maxPrice !== undefined) {
-    conditions.push(lte(sql`coalesce(${products.salePriceCents}, ${products.priceCents})`, query.maxPrice))
-  }
-
-  /* --- on sale --- */
-  /* "Reduced" means what a customer sees as reduced: a manual sale price OR an
-     active promotion reaching this product. Filtering on salePriceCents alone
-     hid every promotion-discounted product from the very filter meant to find
-     it. */
-  if (query.onSale) {
-    const scope = await promotionScope()
-    const reasons = [isNotNull(products.salePriceCents)]
-    if (scope.everything) {
-      /* Every product is discounted; the filter stops narrowing anything. */
-      reasons.length = 0
-    } else {
-      if (scope.productIds.length) reasons.push(inArray(products.id, scope.productIds))
-      if (scope.categoryIds.length) reasons.push(inArray(products.categoryId, scope.categoryIds))
+  if (query.categories?.length && scope.kind !== 'subcategory') {
+    const ids: string[] = []
+    for (const value of query.categories) {
+      const [a, b] = value.split('/')
+      const root = scope.kind === 'department' ? tree.find((r) => r.id === scope.department.id) : tree.find((r) => r.slug === a)
+      const childSlug = scope.kind === 'department' ? a : b
+      const child = root?.children.find((c) => c.slug === childSlug)
+      if (child) ids.push(child.id)
     }
-    if (reasons.length) conditions.push(or(...reasons)!)
+    product.categories = ids.length
+      ? sql`${products.categoryId} in (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})`
+      : sql`false`
   }
 
-  /* --- sizes --- */
-  /* Built with the query builder rather than raw SQL: a hand-written
-     `size = any(${array})` makes Drizzle emit one placeholder per element,
-     which Postgres reads as a tuple and rejects. inArray() binds it properly. */
+  /* --- price: what the customer pays, promotions included --- */
+  const price = await effectivePriceSql()
+  const priceParts: SQL[] = []
+  if (query.minPrice !== undefined) priceParts.push(sql`${price} >= ${query.minPrice}`)
+  if (query.maxPrice !== undefined) priceParts.push(sql`${price} <= ${query.maxPrice}`)
+  if (priceParts.length) product.price = sql.join(priceParts, sql` and `)
+
+  /* --- on sale: a sale price or a live promotion — exactly the products
+     whose card shows a reduced price --- */
+  if (query.onSale) product.sale = sql`${price} < ${products.priceCents}`
+
+  /* --- the variant-level groups --- */
   if (query.sizes?.length) {
-    conditions.push(
-      exists(
-        db
-          .select({ one: sql`1` })
-          .from(productVariants)
-          .where(
-            and(
-              eq(productVariants.productId, products.id),
-              eq(productVariants.isActive, true),
-              inArray(productVariants.size, query.sizes),
-            ),
-          ),
-      ),
-    )
+    variant.sizes = sql`v.size in (${sql.join(query.sizes.map((s) => sql`${s}`), sql`, `)})`
   }
-
-  /* --- availability --- */
+  if (query.colours?.length) {
+    variant.colours = sql`${COLOUR_KEY_SQL} in (${sql.join(query.colours.map((c) => sql`${c}`), sql`, `)})`
+  }
   if (query.inStockOnly) {
-    conditions.push(
-      exists(
-        db
-          .select({ one: sql`1` })
-          .from(productVariants)
-          .innerJoin(inventory, eq(inventory.variantId, productVariants.id))
-          .where(
-            and(
-              eq(productVariants.productId, products.id),
-              eq(productVariants.isActive, true),
-              sql`${inventory.onHand} - ${inventory.reserved} > 0`,
-            ),
-          ),
-      ),
-    )
+    /* Buyable: available (shelf minus bags) above zero, on a product the
+       owner has not marked sold out. */
+    variant.stock = sql`(coalesce(i.on_hand, 0) - coalesce(i.reserved, 0) > 0 and ${products.availability} = 'AVAILABLE')`
   }
 
-  const where = and(...conditions)
+  return { base, product, variant, price, scope }
+}
 
-  /* --- count for pagination --- */
+/** The filter conditions (not the base) except the groups in `skip`. With
+ *  `inline`, the variant conditions are returned bare, for a query that joins
+ *  the variant as `v` itself, instead of wrapped in EXISTS. */
+function filterFor(b: Built, skip: Group[] = [], inline = false): SQL {
+  const parts: SQL[] = []
+  for (const [group, cond] of Object.entries(b.product) as [Group, SQL][]) {
+    if (!skip.includes(group)) parts.push(cond)
+  }
+  const variantParts = (Object.entries(b.variant) as [Group, SQL][])
+    .filter(([group]) => !skip.includes(group))
+    .map(([, cond]) => cond)
+  if (inline) {
+    parts.push(...variantParts)
+  } else if (variantParts.length) {
+    parts.push(sql`exists (
+      select 1 from product_variants v left join inventory i on i.variant_id = v.id
+      where v.product_id = ${products.id} and v.is_active and ${sql.join(variantParts, sql` and `)}
+    )`)
+  }
+  return parts.length ? sql.join(parts, sql` and `) : sql`true`
+}
+
+const baseWhere = (b: Built) => sql.join(b.base, sql` and `)
+/** Everything that applies: the base and every filter. */
+const whereFor = (b: Built) => sql`${baseWhere(b)} and ${filterFor(b)}`
+
+export async function listProducts(query: ProductQuery): Promise<ProductListing> {
+  const built = await buildListing(query)
+  if (!built) return emptyListing(query)
+  const where = whereFor(built)
+
+  const orderBy =
+    query.sort === 'price-asc'
+      ? sql`${built.price} asc, ${products.createdAt} desc`
+      : query.sort === 'price-desc'
+        ? sql`${built.price} desc, ${products.createdAt} desc`
+        : query.sort === 'name-asc'
+          ? sql`${products.name}->>${query.locale ?? 'en'} asc`
+          : query.sort === 'popular'
+            ? sql`(select count(*) from product_views pv where pv.product_id = ${products.id}) desc, ${products.createdAt} desc`
+            : sql`${products.createdAt} desc`
+
+  const [[{ total }], rows, facets] = await Promise.all([
+    db.select({ total: sql<number>`count(*)`.mapWith(Number) }).from(products).where(where),
+    db
+      .select({
+        id: products.id,
+        slug: products.slug,
+        name: products.name,
+        summary: products.summary,
+        categoryId: products.categoryId,
+        priceCents: products.priceCents,
+        salePriceCents: products.salePriceCents,
+        createdAt: products.createdAt,
+      })
+      .from(products)
+      .where(where)
+      .orderBy(orderBy)
+      .limit(query.perPage)
+      .offset((query.page - 1) * query.perPage),
+    loadFacets(built, query.locale ?? 'en'),
+  ])
+
+  return {
+    items: await hydrateCards(rows),
+    total,
+    page: query.page,
+    perPage: query.perPage,
+    totalPages: Math.max(1, Math.ceil(total / query.perPage)),
+    facets,
+  }
+}
+
+/** Only the number — for "Show 12 results" while filters are being chosen. */
+export async function countProducts(query: ProductQuery): Promise<number> {
+  const built = await buildListing(query)
+  if (!built) return 0
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)`.mapWith(Number) })
     .from(products)
-    .where(where)
+    .where(whereFor(built))
+  return total
+}
 
-  /* --- sort --- */
-  const effectivePrice = sql`coalesce(${products.salePriceCents}, ${products.priceCents})`
-  const orderBy =
-    query.sort === 'price-asc'
-      ? [asc(effectivePrice)]
-      : query.sort === 'price-desc'
-        ? [desc(effectivePrice)]
-        : query.sort === 'name-asc'
-          ? [asc(sql`${products.name}->>'en'`)]
-          : query.sort === 'popular'
-            ? [
-                desc(
-                  sql`(select count(*) from product_views pv where pv.product_id = ${products.id})`,
-                ),
-                desc(products.createdAt),
-              ]
-            : [desc(products.createdAt)]
-
-  const offset = (query.page - 1) * query.perPage
+/**
+ * Cards for exactly these products, in exactly this order — the hand-picked
+ * homepage sections. Hidden products are skipped rather than shown, so taking
+ * a product out of the shop takes it off the homepage too, without the owner
+ * having to remember a second place.
+ *
+ * `onSaleOnly` is decided by the same pricing that draws the card, after
+ * hydration: a product picked for "On sale" whose sale has since ended drops
+ * out on its own, instead of appearing at full price under a "Sale" heading.
+ */
+export async function listProductsByIds(
+  ids: string[],
+  opts: { onSaleOnly?: boolean } = {},
+): Promise<ProductCard[]> {
+  if (ids.length === 0) return []
 
   const rows = await db
     .select({
@@ -271,21 +373,12 @@ export async function listProducts(query: ProductQuery): Promise<ProductListing>
       createdAt: products.createdAt,
     })
     .from(products)
-    .where(where)
-    .orderBy(...orderBy)
-    .limit(query.perPage)
-    .offset(offset)
+    .where(and(inArray(products.id, ids), eq(products.isActive, true)))
 
-  const items = await hydrateCards(rows)
-
-  return {
-    items,
-    total,
-    page: query.page,
-    perPage: query.perPage,
-    totalPages: Math.max(1, Math.ceil(total / query.perPage)),
-    facets: await loadFacets(where),
-  }
+  const cards = await hydrateCards(rows)
+  const byId = new Map(cards.map((c) => [c.id, c]))
+  const ordered = ids.map((id) => byId.get(id)).filter((c): c is ProductCard => Boolean(c))
+  return opts.onSaleOnly ? ordered.filter((c) => c.isOnSale) : ordered
 }
 
 function emptyListing(query: ProductQuery): ProductListing {
@@ -295,39 +388,100 @@ function emptyListing(query: ProductQuery): ProductListing {
     page: query.page,
     perPage: query.perPage,
     totalPages: 1,
-    facets: { sizes: [], priceRange: { minCents: 0, maxCents: 0 } },
+    facets: { sizes: [], colours: [], categories: [], departments: [], priceRange: { minCents: 0, maxCents: 0 } },
   }
 }
 
-/** Sizes and price range across the *filtered* set, so the facet counts match
- *  what the customer is looking at. */
-async function loadFacets(where: ReturnType<typeof and>) {
-  const sizeRows = await db
-    .select({
-      size: productVariants.size,
-      count: sql<number>`count(distinct ${products.id})`.mapWith(Number),
-    })
-    .from(products)
-    .innerJoin(productVariants, eq(productVariants.productId, products.id))
-    .where(and(where, eq(productVariants.isActive, true)))
-    .groupBy(productVariants.size)
+export type FacetOption = { value: string; label: string; count: number; group?: string }
 
-  const [range] = await db
-    .select({
-      minCents: sql<number>`coalesce(min(coalesce(${products.salePriceCents}, ${products.priceCents})), 0)`.mapWith(
-        Number,
-      ),
-      maxCents: sql<number>`coalesce(max(coalesce(${products.salePriceCents}, ${products.priceCents})), 0)`.mapWith(
-        Number,
-      ),
-    })
-    .from(products)
-    .where(where)
+/** The options the filter panel offers, each counted with every OTHER
+ *  filter applied. Five small queries, run together. */
+async function loadFacets(b: Built, locale: string): Promise<ProductListing['facets']> {
+  const loc = sql.raw(`'${locale === 'el' || locale === 'ru' ? locale : 'en'}'`)
 
-  /* SQL would sort these alphabetically — "L, M, One size, S, XL, XS". */
+  /* Which options EXIST comes from the page itself (category and search);
+     how many products each would show comes from every other filter. So the
+     panel keeps its shape as filters change — an option that would show
+     nothing right now is dimmed, not whisked away. */
+  const [sizeRows, colourRows, range, catRows] = await Promise.all([
+    db.execute<{ size: string; n: number }>(sql`
+      select v.size, count(distinct ${products.id}) filter (where ${filterFor(b, ['sizes'], true)})::int as n
+      from products join product_variants v on v.product_id = ${products.id}
+      left join inventory i on i.variant_id = v.id
+      where ${baseWhere(b)} and v.is_active
+      group by v.size`),
+    db.execute<{ key: string; name: string; hex: string | null; n: number }>(sql`
+      select ${COLOUR_KEY_SQL} as key,
+             min(coalesce(v.color_name->>${loc}, v.color_name->>'en')) as name,
+             min(v.color_hex) as hex,
+             count(distinct ${products.id}) filter (where ${filterFor(b, ['colours'], true)})::int as n
+      from products join product_variants v on v.product_id = ${products.id}
+      left join inventory i on i.variant_id = v.id
+      where ${baseWhere(b)} and v.is_active and v.color_name->>'en' is not null
+      group by 1 order by count(distinct ${products.id}) desc, 2`),
+    db.execute<{ lo: number | null; hi: number | null }>(sql`
+      select min(${b.price})::int as lo, max(${b.price})::int as hi
+      from products where ${baseWhere(b)}`),
+    b.scope.kind === 'subcategory'
+      ? Promise.resolve({ rows: [] as { id: string; parent_id: string | null; n: number }[] })
+      : db.execute<{ id: string; parent_id: string | null; n: number }>(sql`
+          select c.id, c.parent_id, count(*) filter (where ${filterFor(b, ['categories'])})::int as n
+          from products join categories c on c.id = ${products.categoryId}
+          where ${baseWhere(b)}
+          group by c.id, c.parent_id`),
+  ])
+
+  /* Categories and departments, named from the navigation tree so they
+     appear in the same order as the menu. */
+  const categories: FacetOption[] = []
+  const departments: FacetOption[] = []
+  if (b.scope.kind !== 'subcategory') {
+    const tree = await getCategoryTree()
+    const count = new Map(catRows.rows.map((r) => [r.id, Number(r.n)]))
+    const scope = b.scope
+    for (const root of tree) {
+      if (scope.kind === 'department' && root.id !== scope.department.id) continue
+      /* With a department chosen, the other department's categories go. */
+      if (scope.kind === 'all' && scope.department && root.slug !== scope.department) continue
+      for (const child of root.children) {
+        if (!count.has(child.id)) continue /* nothing of it on this page at all */
+        const n = count.get(child.id) ?? 0
+        categories.push({
+          value: scope.kind === 'department' ? child.slug : `${root.slug}/${child.slug}`,
+          label: tField(child.name, locale as Locale),
+          count: n,
+          group: scope.kind === 'all' ? tField(root.name, locale as Locale) : undefined,
+        })
+      }
+    }
+    if (scope.kind === 'all') {
+      /* Department counts ignore the department choice itself (so both stay
+         visible) but respect everything else. */
+      const deptRows = await db.execute<{ root: string; n: number }>(sql`
+        select coalesce(c.parent_id, c.id) as root, count(*) filter (where ${filterFor(b, ['department'])})::int as n
+        from products join categories c on c.id = ${products.categoryId}
+        where ${baseWhere(b)}
+        group by 1`)
+      const byRoot = new Map(deptRows.rows.map((r) => [r.root, Number(r.n)]))
+      for (const root of tree) {
+        if (!byRoot.has(root.id)) continue
+        departments.push({ value: root.slug, label: tField(root.name, locale as Locale), count: byRoot.get(root.id) ?? 0 })
+      }
+    }
+  }
+
   return {
-    sizes: sortBySize(sizeRows, (r) => r.size),
-    priceRange: range ?? { minCents: 0, maxCents: 0 },
+    /* SQL would sort these alphabetically — "L, M, One size, S, XL, XS". */
+    sizes: sortBySize(
+      sizeRows.rows.map((r) => ({ size: r.size, count: Number(r.n) })),
+      (r) => r.size,
+    ),
+    colours: colourRows.rows
+      .filter((r) => r.key)
+      .map((r) => ({ value: r.key, label: r.name, hex: r.hex, count: Number(r.n) })),
+    categories,
+    departments,
+    priceRange: { minCents: Number(range.rows[0]?.lo ?? 0), maxCents: Number(range.rows[0]?.hi ?? 0) },
   }
 }
 
@@ -349,7 +503,12 @@ async function hydrateCards(
 
   const ids = rows.map((r) => r.id)
 
-  const [images, variants, promos] = await Promise.all([
+  const [availability, images, variants, promos] = await Promise.all([
+    db
+      .select({ id: products.id, availability: products.availability })
+      .from(products)
+      .where(inArray(products.id, ids)),
+
     db
       .select({
         productId: productImages.productId,
@@ -390,6 +549,7 @@ async function hydrateCards(
     saleCents: r.salePriceCents,
   }))
   const prices = await resolvePrices(priceInputs, promos)
+  const availabilityById = new Map(availability.map((a) => [a.id, a.availability]))
 
   return rows.map((row) => {
     const price: EffectivePrice =
@@ -406,6 +566,8 @@ async function hydrateCards(
       } satisfies EffectivePrice)
 
     const productVariantsForRow = variants.filter((v) => v.productId === row.id)
+    const inStock = productVariantsForRow.some((v) => v.available > 0)
+    const markedSoldOut = availabilityById.get(row.id) === 'SOLD_OUT'
 
     return {
       id: row.id,
@@ -428,7 +590,8 @@ async function hydrateCards(
         })),
         (v) => v.size,
       ),
-      inStock: productVariantsForRow.some((v) => v.available > 0),
+      inStock,
+      soldOut: markedSoldOut || !inStock,
       createdAt: row.createdAt,
     }
   })
@@ -472,6 +635,8 @@ export type ProductDetail = {
   finalCents: number
   discountPercent: number
   inStock: boolean
+  /** Marked sold out by the owner, or nothing on the shelf — cannot be bought. */
+  soldOut: boolean
   currency: string
 }
 
@@ -596,6 +761,7 @@ export async function getProductBySlug(slug: string): Promise<ProductDetail | nu
     finalCents: headline.finalCents,
     discountPercent: headline.discountPercent,
     inStock: variants.some((v) => v.inStock),
+    soldOut: row.product.availability === 'SOLD_OUT' || !variants.some((v) => v.inStock),
     currency: row.product.currency,
   }
 }

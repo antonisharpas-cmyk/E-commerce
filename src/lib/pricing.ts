@@ -23,6 +23,7 @@ import { db } from '@/db'
 import {
   categories,
   deliveryOptions,
+  products,
   promoCodes,
   promoCodeUsage,
   promotions,
@@ -168,6 +169,80 @@ export async function promotionScope(at = new Date()): Promise<{
   }
 
   return { everything: false, productIds, categoryIds: [...reached] }
+}
+
+/**
+ * The price a customer pays, as a SQL expression over the `products` row —
+ * for filtering and sorting listings by the same number the card shows.
+ *
+ * This is `resolvePrices` restated for the database, rule for rule: the
+ * cheapest of the list price, a manual sale price below it, and each live
+ * promotion that reaches the product (computed off the LIST price, so a sale
+ * and a promotion never compound). A test compares the two over every
+ * product, so they cannot drift apart silently.
+ *
+ * Without it a €69 hoodie shown at €55.20 by a promotion would be missing
+ * from "up to €60", and "price: low to high" would put it in the wrong place.
+ */
+export async function effectivePriceSql(at = new Date()) {
+  const list = sql`${products.priceCents}`
+  const candidates = [
+    sql`case when ${products.salePriceCents} is not null and ${products.salePriceCents} < ${list}
+             then ${products.salePriceCents} else ${list} end`,
+  ]
+  const active = await loadActivePromotions(at)
+  if (active.length) {
+    const descendants = await categoryDescendants(
+      active.map((p) => p.categoryId).filter((id): id is string => id !== null),
+    )
+    for (const promo of active) {
+      const applies =
+        promo.scope === 'ALL'
+          ? sql`true`
+          : promo.scope === 'PRODUCT'
+            ? promo.productId
+              ? sql`${products.id} = ${promo.productId}::uuid`
+              : sql`false`
+            : promo.categoryId
+              ? sql`${products.categoryId} in (${sql.join(
+                  (descendants.get(promo.categoryId) ?? [promo.categoryId]).map((id) => sql`${id}::uuid`),
+                  sql`, `,
+                )})`
+              : sql`false`
+      const discounted =
+        promo.discountType === 'PERCENTAGE'
+          ? /* Math.round(list * pct / 100), which rounds halves up — as round() does for positives. */
+            sql`(${list} - round((${list} * ${promo.discountValue})::numeric / 100)::int)`
+          : sql`greatest(0, ${list} - ${promo.discountValue})`
+      candidates.push(sql`case when ${applies} then ${discounted} else ${list} end`)
+    }
+  }
+  return sql`greatest(0, least(${sql.join(candidates, sql`, `)}))`
+}
+
+/** Each category with every category beneath it (itself included). */
+async function categoryDescendants(roots: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>()
+  if (roots.length === 0) return out
+  const rows = await db.select({ id: categories.id, parentId: categories.parentId }).from(categories)
+  const childrenOf = new Map<string, string[]>()
+  for (const row of rows) {
+    if (!row.parentId) continue
+    childrenOf.set(row.parentId, [...(childrenOf.get(row.parentId) ?? []), row.id])
+  }
+  for (const root of new Set(roots)) {
+    const reached = new Set<string>()
+    const queue = [root]
+    let guard = 0
+    while (queue.length && guard++ < 1000) {
+      const id = queue.pop()!
+      if (reached.has(id)) continue
+      reached.add(id)
+      queue.push(...(childrenOf.get(id) ?? []))
+    }
+    out.set(root, [...reached])
+  }
+  return out
 }
 
 /**

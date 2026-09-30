@@ -15,6 +15,8 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 import { BRAND } from '@/config/brand'
 import { guardAdmin } from '@/lib/admin'
+import { assertSchemaReady } from '@/db/ready'
+import { inboxCounts } from '@/lib/support'
 import { SignOutButton } from '@/components/auth/SignOutButton'
 import '../globals.css'
 
@@ -26,13 +28,21 @@ export const metadata: Metadata = {
 
 const NAV = [
   { href: '/admin', label: 'Overview' },
+  { href: '/admin/homepage', label: 'Homepage' },
   { href: '/admin/products', label: 'Products' },
   { href: '/admin/stock', label: 'Stock' },
+  { href: '/admin/support', label: 'Customer service' },
+  { href: '/admin/emails', label: 'Marketing & Emails' },
   { href: '/admin/settings', label: 'Settings' },
 ]
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  /* Before anything reads a table: on this machine's database, new code's
+     migrations are applied here rather than surfacing as a failed query. */
+  await assertSchemaReady()
   const user = await guardAdmin()
+  /* The one live number in the nav: conversations waiting for a reply. */
+  const support = await inboxCounts().catch(() => ({ open: 0, unread: 0 }))
 
   return (
     <html lang="en">
@@ -44,20 +54,28 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </Link>
             <span className="label rounded-sm bg-ink px-2 py-1 text-paper">Admin</span>
 
-            <nav className="flex flex-wrap gap-x-6 gap-y-2">
+            <nav
+              aria-label="Admin"
+              className="order-last -mx-5 flex w-[calc(100%+2.5rem)] gap-x-6 overflow-x-auto px-5 pb-1 md:order-none md:mx-0 md:w-auto md:flex-wrap md:overflow-visible md:px-0 md:pb-0"
+            >
               {NAV.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className="label text-muted transition-colors hover:text-ink"
+                  className="label shrink-0 whitespace-nowrap text-muted transition-colors hover:text-ink"
                 >
                   {item.label}
+                  {item.href === '/admin/support' && support.unread > 0 && (
+                    <span className="ml-1.5 rounded-full bg-sale px-1.5 py-0.5 text-[10px] text-paper" aria-label={`${support.unread} waiting`}>
+                      {support.unread}
+                    </span>
+                  )}
                 </Link>
               ))}
             </nav>
 
             <div className="ml-auto flex items-center gap-5 text-sm">
-              <span className="text-muted">
+              <span className="hidden text-muted lg:inline">
                 {user.firstName} {user.lastName}
                 <span className="ml-2 label text-muted">{user.role.replace('_', ' ')}</span>
               </span>

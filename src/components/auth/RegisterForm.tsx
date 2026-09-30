@@ -16,9 +16,14 @@ import { useRouter } from 'next/navigation'
 import type { Locale } from '@/config/brand'
 import { getTranslator } from '@/i18n/messages'
 import { AuthCard, Field, FormError } from './Field'
+import { OtpInput } from './OtpInput'
+import { PasswordField } from './PasswordField'
 import { button } from '@/components/ui'
 
 type FieldErrors = Record<string, string | undefined>
+
+/* Read in event handlers only (the lint rule cannot tell them from render). */
+const clockNow = () => Date.now()
 
 /* Zod's treeified errors nest by field; pull out the first message for each. */
 function flattenFieldErrors(tree: unknown): FieldErrors {
@@ -43,6 +48,7 @@ export function RegisterForm({ locale }: { locale: Locale }) {
     email: '',
     phone: '',
     password: '',
+    confirmPassword: '',
     marketingConsent: false,
   })
   const [code, setCode] = useState('')
@@ -50,6 +56,16 @@ export function RegisterForm({ locale }: { locale: Locale }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [resendIn, setResendIn] = useState(0)
+  const [notice, setNotice] = useState<string | null>(null)
+  /* When the current code stops working, by this browser's clock. */
+  const [expiresAt, setExpiresAt] = useState<number | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (step !== 'code') return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [step])
 
   /* Countdown for the resend link, so the button is not offered while the
      server would refuse it anyway. */
@@ -64,9 +80,14 @@ export function RegisterForm({ locale }: { locale: Locale }) {
 
   async function submitDetails(e: React.FormEvent) {
     e.preventDefault()
-    setBusy(true)
     setError(null)
     setFields({})
+    /* Checked here for a quick answer, and again by the server. */
+    if (form.confirmPassword !== form.password) {
+      setFields({ confirmPassword: t('auth.passwordMismatch') })
+      return
+    }
+    setBusy(true)
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -78,6 +99,7 @@ export function RegisterForm({ locale }: { locale: Locale }) {
         message?: string
         fields?: unknown
         retryAfter?: number
+        ttlSeconds?: number
       }
 
       if (!res.ok || !data.ok) {
@@ -88,7 +110,11 @@ export function RegisterForm({ locale }: { locale: Locale }) {
       }
 
       setStep('code')
+      setCode('')
+      setNotice(null)
       setResendIn(60)
+      setExpiresAt(clockNow() + (data.ttlSeconds ?? 600) * 1000)
+      setNow(clockNow())
     } catch {
       setError(t('err.network'))
     } finally {
@@ -96,20 +122,28 @@ export function RegisterForm({ locale }: { locale: Locale }) {
     }
   }
 
-  async function submitCode(e: React.FormEvent) {
-    e.preventDefault()
+  async function submitCode(e?: React.FormEvent, value = code) {
+    e?.preventDefault()
+    if (busy) return
+    if (value.length !== 6) {
+      setError(t('auth.enterCode'))
+      return
+    }
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
       const res = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: form.email, code }),
+        body: JSON.stringify({ email: form.email, code: value }),
       })
       const data = (await res.json()) as { ok?: boolean; message?: string }
 
       if (!res.ok || !data.ok) {
         setError(data.message ?? t('err.generic'))
+        /* Start again from the first box rather than editing a wrong code. */
+        setCode('')
         setBusy(false)
         return
       }
@@ -125,14 +159,21 @@ export function RegisterForm({ locale }: { locale: Locale }) {
   async function resend() {
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, locale }),
       })
-      const data = (await res.json()) as { ok?: boolean; message?: string; retryAfter?: number }
+      const data = (await res.json()) as { ok?: boolean; message?: string; retryAfter?: number; ttlSeconds?: number }
       if (!res.ok || !data.ok) setError(data.message ?? t('err.generic'))
+      else {
+        setCode('')
+        setNotice(t('auth.codeSent'))
+        setExpiresAt(clockNow() + (data.ttlSeconds ?? 600) * 1000)
+        setNow(clockNow())
+      }
       setResendIn(data.retryAfter ?? 60)
     } catch {
       setError(t('err.network'))
@@ -143,51 +184,59 @@ export function RegisterForm({ locale }: { locale: Locale }) {
 
   /* ------------------------------------------------------------- step two -- */
   if (step === 'code') {
+    const left = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / 1000)) : null
+    const expired = left === 0
+    const mmss = left === null ? '' : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`
     return (
       <AuthCard title={t('auth.verifyTitle')} sub={t('auth.verifyBody', { email: form.email })}>
         <form onSubmit={submitCode} className="space-y-5" noValidate>
-          <FormError>{error}</FormError>
+          <FormError>{expired ? null : error}</FormError>
 
-          <Field
-            label={t('auth.code')}
-            name="code"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={6}
-            required
+          <OtpInput
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-            className="mt-2 w-full border border-line px-3.5 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:border-ink"
+            onChange={(v) => {
+              setCode(v)
+              if (error) setError(null)
+            }}
+            onComplete={(v) => {
+              if (!expired) void submitCode(undefined, v)
+            }}
+            label={t('auth.code')}
+            digitLabel={(n) => t('auth.codeDigit', { n })}
+            disabled={busy || expired}
+            autoFocus
           />
 
-          <button
-            type="submit"
-            disabled={busy || code.length !== 6}
-            className={`${button.primary} w-full`}
-          >
+          <p aria-live="polite" className={`text-sm ${expired ? 'text-sale' : 'text-muted'}`}>
+            {expired ? t('auth.codeExpired') : left !== null ? t('auth.codeExpiresIn', { time: mmss }) : null}
+            {notice && !expired && <span className="block text-ink">{notice}</span>}
+          </p>
+
+          <button type="submit" disabled={busy || code.length !== 6 || expired} className={`${button.primary} w-full`}>
             {busy ? '…' : t('auth.verify')}
           </button>
         </form>
 
-        <div className="mt-6 flex items-center justify-between text-sm">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-sm">
           <button
             type="button"
             onClick={resend}
             disabled={busy || resendIn > 0}
             className="text-muted underline hover:text-ink disabled:no-underline disabled:opacity-50"
           >
-            {resendIn > 0 ? `${t('auth.resend')} (${resendIn}s)` : t('auth.resend')}
+            {resendIn > 0 ? t('auth.resendIn', { seconds: resendIn }) : t('auth.resend')}
           </button>
           <button
             type="button"
             onClick={() => {
               setStep('details')
               setError(null)
+              setNotice(null)
               setCode('')
             }}
             className="text-muted underline hover:text-ink"
           >
-            {t('auth.email')}
+            {t('auth.changeEmail')}
           </button>
         </div>
       </AuthCard>
@@ -244,16 +293,38 @@ export function RegisterForm({ locale }: { locale: Locale }) {
           hint="+357 99 123456"
         />
 
-        <Field
+        <PasswordField
           label={t('auth.password')}
           name="password"
-          type="password"
+          showLabel={t('auth.showPassword')}
+          hideLabel={t('auth.hidePassword')}
           autoComplete="new-password"
           required
           value={form.password}
           onChange={set('password')}
           error={fields.password}
-          hint="At least 10 characters."
+          hint={t('auth.passwordHint')}
+        />
+
+        <PasswordField
+          label={t('auth.confirmPassword')}
+          name="confirmPassword"
+          showLabel={t('auth.showPassword')}
+          hideLabel={t('auth.hidePassword')}
+          autoComplete="new-password"
+          required
+          value={form.confirmPassword}
+          onChange={(e) => {
+            const value = e.target.value
+            setForm((f) => ({ ...f, confirmPassword: value }))
+            if (fields.confirmPassword) setFields((x) => ({ ...x, confirmPassword: undefined }))
+          }}
+          onBlur={() => {
+            if (form.confirmPassword && form.confirmPassword !== form.password) {
+              setFields((x) => ({ ...x, confirmPassword: t('auth.passwordMismatch') }))
+            }
+          }}
+          error={fields.confirmPassword}
         />
 
         <label className="flex cursor-pointer items-start gap-3 text-sm">

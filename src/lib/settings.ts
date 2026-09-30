@@ -26,6 +26,14 @@ export const SETTING_DEFAULTS: {
   estimated_delivery_max_days: number
   homepage_promotions_enabled: boolean
   order_number_prefix: string
+  support_email: string
+  support_idle_minutes: number
+  support_auto_reply_enabled: boolean
+  support_auto_reply_en: string
+  support_auto_reply_el: string
+  support_auto_reply_ru: string
+  marketing_cooldown_hours: number
+  email_test_address: string
 } = {
   /* Free delivery over this amount, in cents. Section 14: NOT hardcoded —
      this is only the value used before an admin has ever saved one. */
@@ -52,6 +60,25 @@ export const SETTING_DEFAULTS: {
   homepage_promotions_enabled: true,
 
   order_number_prefix: 'SF',
+  /* Where "a customer started a conversation" emails go. Empty means the
+     shop's public contact address in src/config/brand.ts. */
+  support_email: '',
+  /* A support conversation with no new message for this long closes itself,
+     and the customer is emailed the transcript. */
+  support_idle_minutes: 10,
+  /* The automatic first reply in the chat, in each language. */
+  support_auto_reply_enabled: true,
+  support_auto_reply_en:
+    'Hello! Thank you for contacting Atelier Customer Service. Someone from our team will reply as soon as possible.',
+  support_auto_reply_el:
+    'Γεια σου! Ευχαριστούμε που επικοινώνησες με την Εξυπηρέτηση Πελατών Atelier. Κάποιος από την ομάδα μας θα σου απαντήσει το συντομότερο.',
+  support_auto_reply_ru:
+    'Здравствуйте! Спасибо, что обратились в службу поддержки Atelier. Сотрудник нашей команды ответит вам как можно скорее.',
+  /* Frequency protection: at most one marketing email (abandoned bag,
+     newsletter, promotion) to an address within this many hours. 0 = off. */
+  marketing_cooldown_hours: 20,
+  /* Where "Send test email" goes — and the only address it can go to. */
+  email_test_address: '',
 }
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS

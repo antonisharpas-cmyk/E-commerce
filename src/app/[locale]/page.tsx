@@ -14,7 +14,8 @@ import { assertSchemaReady } from '@/db/ready'
 import { heroBanners, promotions } from '@/db/schema'
 import { BRAND, isLocale, type Locale } from '@/config/brand'
 import { getTranslator } from '@/i18n/messages'
-import { getCategoryTree, listProducts, t as tr } from '@/lib/catalog'
+import { getCategoryTree, t as tr } from '@/lib/catalog'
+import { getHomepageContent } from '@/lib/homepage-content'
 import { getSetting } from '@/lib/settings'
 import { formatMoney } from '@/lib/pricing'
 import { ProductCard } from '@/components/ProductCard'
@@ -22,6 +23,8 @@ import { ProductMarquee } from '@/components/ProductMarquee'
 import { HeroMedia } from '@/components/HeroMedia'
 import { videoSources } from '@/lib/media'
 import { SectionHead } from '@/components/ui'
+import { NewsletterForm } from '@/components/NewsletterForm'
+import { OpenChatButton } from '@/components/OpenChatButton'
 
 export const revalidate = 60
 
@@ -95,16 +98,16 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
      a column a pending migration is about to add. */
   await assertSchemaReady()
 
-  const [hero, promo, categories, newIn, onSale, popular, threshold] = await Promise.all([
+  const [hero, promo, categories, content, threshold] = await Promise.all([
     getHero(),
     getHomepagePromotion(),
     getCategoryTree(),
-    listProducts({ sort: 'newest', page: 1, perPage: 8, locale }),
-    listProducts({ sort: 'newest', page: 1, perPage: 4, onSale: true, locale }),
-    /* The moving strip wants enough products that the loop is not obvious. */
-    listProducts({ sort: 'popular', page: 1, perPage: 12, locale }),
+    /* The sections under the hero — their order, visibility and
+       contents are the shop owner's, set in /admin/homepage. */
+    getHomepageContent(locale, { onlyVisible: true }),
     getSetting('free_delivery_threshold_cents'),
   ])
+  const { layout, tiles, trending, newIn, onSale } = content
 
   return (
     <>
@@ -200,119 +203,156 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
         </section>
       )}
 
-      {/* ---------------------------------------------------- categories --- */}
-      <section className="container-x py-14">
-        <SectionHead title={t('home.categories')} />
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {categories.flatMap((root) =>
-            root.children.slice(0, 4).map((child) => (
-              <Link
-                key={child.id}
-                href={`${base}/${root.slug}/${child.slug}`}
-                className="group relative flex aspect-4/5 flex-col justify-end overflow-hidden border border-line bg-paper-2 p-4 transition-colors hover:border-ink"
-              >
-                {/* Artwork when the admin has set one; the tile still works
-                    without it, which is how it renders before a shop has
-                    uploaded its category imagery. */}
-                {child.imageUrl && (
-                  <>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={child.imageUrl}
-                      alt=""
-                      className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-                  </>
-                )}
-                <span className={`label relative ${child.imageUrl ? 'text-white/70' : 'text-muted'}`}>
-                  {tr(root.name, locale)}
-                </span>
-                <span
-                  className={`relative mt-1 text-lg font-semibold tracking-tight ${
-                    child.imageUrl ? 'text-white' : ''
-                  }`}
-                >
-                  {tr(child.name, locale)}
-                </span>
-              </Link>
-            )),
-          )}
-        </div>
-      </section>
+      {layout
+        .filter((section) => section.isVisible)
+        .map((section) => {
+          switch (section.key) {
+            /* -------------------------------------------- categories --- */
+            case 'categories':
+              if (tiles.length === 0) return null
+              return (
+                <section key="categories" className="container-x py-14">
+                  <SectionHead title={t('home.categories')} />
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {tiles.map(({ root, child }) => (
+                      <Link
+                        key={child.id}
+                        href={`${base}/${root.slug}/${child.slug}`}
+                        className="group relative flex aspect-4/5 flex-col justify-end overflow-hidden border border-line bg-paper-2 p-4 transition-colors hover:border-ink"
+                      >
+                        {child.imageUrl && (
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={child.imageUrl}
+                              alt=""
+                              loading="lazy"
+                              className="absolute inset-0 h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                          </>
+                        )}
+                        <span
+                          className={`label relative ${child.imageUrl ? 'text-white/70' : 'text-muted'}`}
+                        >
+                          {tr(root.name, locale)}
+                        </span>
+                        <span
+                          className={`relative mt-1 text-lg font-semibold tracking-tight ${
+                            child.imageUrl ? 'text-white' : ''
+                          }`}
+                        >
+                          {tr(child.name, locale)}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                </section>
+              )
 
-      {/* --------------------------------------------- the moving strip --- */}
-      {popular.items.length > 2 && (
-        <section className="border-y border-line py-12">
-          <div className="container-x">
-            <SectionHead title={t('home.trending')} sub={t('home.trendingSub')} />
-          </div>
-          {/* Full-bleed: the strip runs off both edges of the screen, which is
-              what makes it read as continuous rather than as a boxed widget. */}
-          <ProductMarquee products={popular.items} locale={locale} seconds={52} />
-        </section>
-      )}
+            /* ------------------------------------------- moving strip --- */
+            case 'trending':
+              /* A loop of one or two products reads as a glitch, not a strip. */
+              if (trending.length < 3) return null
+              return (
+                <section key="trending" className="-mt-px border-y border-line py-12">
+                  <div className="container-x">
+                    <SectionHead title={t('home.trending')} sub={t('home.trendingSub')} />
+                  </div>
+                  {/* Full-bleed: the strip runs off both edges of the screen,
+                      which is what makes it read as continuous. */}
+                  <ProductMarquee products={trending} locale={locale} seconds={52} />
+                </section>
+              )
 
-      {/* -------------------------------------------------------- new in --- */}
-      <section className="container-x pb-14">
-        <SectionHead
-          title={t('home.newIn')}
-          sub={t('home.newInSub')}
-          href={`${base}/men`}
-          hrefLabel={t('home.viewAll')}
-        />
-        <div className="grid grid-cols-2 gap-x-3 gap-y-8 md:grid-cols-4">
-          {newIn.items.map((product, i) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              locale={locale}
-              priority={i < 4}
-            />
-          ))}
-        </div>
-      </section>
+            /* ------------------------------------------------- new in --- */
+            case 'new_in':
+              if (newIn.length === 0) return null
+              return (
+                <section key="new_in" className="container-x py-14">
+                  <SectionHead
+                    title={t('home.justDropped')}
+                    sub={t('home.justDroppedSub')}
+                    href={`${base}/new`}
+                    hrefLabel={t('home.viewAll')}
+                  />
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-8 md:grid-cols-4">
+                    {newIn.map((product, i) => (
+                      <ProductCard key={product.id} product={product} locale={locale} priority={i < 4} />
+                    ))}
+                  </div>
+                  <div className="mt-10 flex justify-center">
+                    <Link
+                      href={`${base}/new`}
+                      className="inline-flex items-center bg-ink px-8 py-4 label text-paper transition hover:opacity-90"
+                    >
+                      {t('home.shopNewArrivals')}
+                    </Link>
+                  </div>
+                </section>
+              )
 
-      {/* ------------------------------------------------------- on sale --- */}
-      {onSale.items.length > 0 && (
-        <section className="border-t border-line bg-paper-2">
-          <div className="container-x py-14">
-            <SectionHead title={t('home.onSale')} />
-            <div className="grid grid-cols-2 gap-x-3 gap-y-8 md:grid-cols-4">
-              {onSale.items.map((product) => (
-                <ProductCard key={product.id} product={product} locale={locale} />
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
+            /* ------------------------------------------- newsletter --- */
+            case 'newsletter':
+              /* An invitation in the page, never a pop-up or a gate. */
+              return (
+                <section key="newsletter" aria-labelledby="newsletter-title" className="bg-ink text-paper">
+                  <div className="container-x grid gap-10 py-16 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:items-center md:py-20">
+                    <div>
+                      <p className="label text-paper/60">{t('news.eyebrow')}</p>
+                      <h2 id="newsletter-title" className="mt-3 text-[clamp(1.8rem,3.6vw,2.8rem)] font-semibold leading-[1.05] tracking-tight">
+                        {t('news.title')}
+                      </h2>
+                      <p className="mt-4 max-w-md text-sm leading-relaxed text-paper/75">{t('news.body')}</p>
+                    </div>
+                    <NewsletterForm locale={locale} source="homepage" tone="dark" />
+                  </div>
+                </section>
+              )
+
+            /* ------------------------------------------------ on sale --- */
+            case 'on_sale':
+              if (onSale.length === 0) return null
+              return (
+                <section key="on_sale" className="-mt-px border-y border-line bg-paper-2">
+                  <div className="container-x py-14">
+                    <SectionHead title={t('home.onSale')} />
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-8 md:grid-cols-4">
+                      {onSale.map((product) => (
+                        <ProductCard key={product.id} product={product} locale={locale} />
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              )
+          }
+        })}
 
       {/* ----------------------------------------------------- reassurance - */}
-      <section className="container-x grid gap-8 py-14 md:grid-cols-3">
+      <section className="container-x grid gap-8 py-14 sm:grid-cols-2 lg:grid-cols-4">
         {[
           {
             title: t('footer.delivery'),
             body: t('pdp.deliveryBody', { threshold: formatMoney(threshold, locale) }),
+            href: `${base}/contact#delivery`,
           },
-          {
-            title: t('footer.returns'),
-            body:
-              locale === 'el'
-                ? 'Επιστροφές εντός 14 ημερών, όπως προβλέπει ο νόμος.'
-                : locale === 'ru'
-                  ? 'Возврат в течение 14 дней, как требует закон.'
-                  : 'Returns within 14 days, as the law requires.',
-          },
-          {
-            title: BRAND.contact.pickupName,
-            body: BRAND.contact.openingHours,
-          },
+          { title: t('footer.returns'), body: t('help.returnsBody'), href: `${base}/contact#returns` },
+          { title: BRAND.contact.pickupName, body: BRAND.contact.openingHours, href: `${base}/contact#store` },
         ].map((item) => (
           <div key={item.title} className="border-t border-ink pt-4">
-            <h3 className="label">{item.title}</h3>
+            <h3 className="label">
+              <Link href={item.href} className="hover:underline">
+                {item.title}
+              </Link>
+            </h3>
             <p className="mt-2 text-sm text-muted">{item.body}</p>
           </div>
         ))}
+        <div className="border-t border-ink pt-4">
+          <h3 className="label">{t('home.helpTitle')}</h3>
+          <p className="mt-2 text-sm text-muted">{t('home.helpBody')}</p>
+          <OpenChatButton label={t('home.startChat')} className="mt-3 label underline underline-offset-4 hover:opacity-70" />
+        </div>
       </section>
     </>
   )

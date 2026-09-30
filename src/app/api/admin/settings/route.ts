@@ -24,6 +24,9 @@ const bodySchema = z
     estimated_delivery_max_days: z.number().int().min(0).max(365),
     homepage_promotions_enabled: z.boolean(),
     order_number_prefix: z.string().regex(/^[A-Z][A-Z0-9]{0,5}$/),
+    /* Empty = the shop's public contact address. */
+    support_email: z.union([z.literal(''), z.string().trim().toLowerCase().email().max(255)]),
+    support_idle_minutes: z.number().int().min(2).max(240),
   })
   .refine((v) => v.estimated_delivery_max_days >= v.estimated_delivery_min_days, {
     message: 'The longest delivery estimate cannot be shorter than the quickest.',

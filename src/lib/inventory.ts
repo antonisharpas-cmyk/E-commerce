@@ -36,7 +36,7 @@
 
 import { and, eq, inArray, lt, sql } from 'drizzle-orm'
 import { db, type Tx } from '@/db'
-import { inventory, inventoryReservations } from '@/db/schema'
+import { inventory, inventoryReservations, productVariants, products } from '@/db/schema'
 import { getSetting } from './settings'
 
 export type ReserveRequest = { variantId: string; quantity: number }
@@ -45,7 +45,13 @@ export type ReserveOutcome =
   | { ok: true; reservationId: string; expiresAt: Date; available: number }
   | {
       ok: false
-      reason: 'OUT_OF_STOCK' | 'INSUFFICIENT_STOCK' | 'NO_SUCH_VARIANT' | 'INVALID_QUANTITY'
+      reason:
+        | 'OUT_OF_STOCK'
+        | 'INSUFFICIENT_STOCK'
+        | 'NO_SUCH_VARIANT'
+        | 'INVALID_QUANTITY'
+        /** The product is in the shop but marked sold out by the owner. */
+        | 'SOLD_OUT'
       /** What the customer could actually have, so the UI can offer it. */
       available: number
       variantId: string
@@ -155,6 +161,27 @@ export async function reserveForCart(
 
   if (!Number.isInteger(quantity) || quantity < 1) {
     return { ok: false, reason: 'INVALID_QUANTITY', available: 0, variantId }
+  }
+
+  /* Can this be bought at all? Checked here, on the server, because the
+     browser can post any variant id it likes: a hidden product, a retired
+     size or a product marked sold out must not be reservable just because
+     someone knows its id. Hidden answers exactly like "no such thing". */
+  const [sellable] = await db
+    .select({
+      productActive: products.isActive,
+      variantActive: productVariants.isActive,
+      availability: products.availability,
+    })
+    .from(productVariants)
+    .innerJoin(products, eq(products.id, productVariants.productId))
+    .where(eq(productVariants.id, variantId))
+    .limit(1)
+  if (!sellable || !sellable.productActive || !sellable.variantActive) {
+    return { ok: false, reason: 'NO_SUCH_VARIANT', available: 0, variantId }
+  }
+  if (sellable.availability === 'SOLD_OUT') {
+    return { ok: false, reason: 'SOLD_OUT', available: 0, variantId }
   }
 
   const ttl = opts.ttlSeconds ?? (await getSetting('reservation_ttl_seconds'))
@@ -598,7 +625,7 @@ export async function setOnHand(variantId: string, onHand: number) {
     throw new InventoryError('Stock must be a whole number of zero or more.', 'INVALID_QUANTITY')
   }
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const locked = await lockInventoryRows(tx, [variantId])
     const row = locked.get(variantId)
     if (!row) throw new InventoryError('No inventory row for that variant.', 'NO_SUCH_VARIANT')
@@ -616,8 +643,27 @@ export async function setOnHand(variantId: string, onHand: number) {
       .set({ onHand, updatedAt: new Date() })
       .where(eq(inventory.variantId, variantId))
 
-    return { onHand, reserved: row.reserved, available: onHand - row.reserved }
+    return {
+      onHand,
+      reserved: row.reserved,
+      available: onHand - row.reserved,
+      wasAvailable: row.onHand - row.reserved,
+    }
   })
+
+  /* Back from nothing: anyone who asked to be told gets a "back in stock"
+     email (lib/automations.ts — it re-checks everything before sending). */
+  if (result.wasAvailable <= 0 && result.available > 0) {
+    try {
+      const { stockReplenished } = await import('@/lib/automations')
+      await stockReplenished(variantId)
+    } catch (err) {
+      console.error('[inventory] back-in-stock scheduling failed', err)
+    }
+  }
+  const { wasAvailable: _was, ...out } = result
+  void _was
+  return out
 }
 
 /** Restock after a cancellation or refund. */

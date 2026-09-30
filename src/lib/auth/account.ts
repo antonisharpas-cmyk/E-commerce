@@ -88,6 +88,7 @@ export async function completeRegistration(
           lastName: pending.lastName,
           role: 'CUSTOMER',
           emailVerifiedAt: new Date(),
+          locale: ['en', 'el', 'ru'].includes(pending.locale) ? pending.locale : 'en',
         })
         .returning({ id: users.id })
       created = rows[0]
@@ -135,6 +136,35 @@ export async function completeRegistration(
 
   const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1)
   const { token, expiresAt } = await createSession(userId, meta)
+
+  /* Ticked "email me about new arrivals" — and the address was just proven by
+     the one-time code, so this is a confirmed subscription. Unticked means
+     nothing is added. A mailing-list hiccup never fails a registration. */
+  if (pending.marketingConsent === true) {
+    try {
+      const { subscribeVerified, asLocale } = await import('@/lib/newsletter')
+      await subscribeVerified({
+        email: row.email,
+        firstName: row.firstName,
+        locale: asLocale(pending.locale),
+        userId,
+        source: 'registration',
+        /* The account welcome below says it; one welcome, not two. */
+        sendWelcome: false,
+      })
+    } catch (err) {
+      console.error('[account] newsletter opt-in not recorded', err)
+    }
+  }
+
+  /* "Welcome to Atelier" — queued, so it follows the automation's switch
+     and shows in Email Activity. Never fails the registration. */
+  try {
+    const { scheduleWelcome } = await import('@/lib/automations')
+    await scheduleWelcome(userId)
+  } catch (err) {
+    console.error('[account] welcome email not queued', err)
+  }
 
   return {
     user: {
@@ -253,6 +283,37 @@ export async function login(
 
 /* --------------------------------------------------------------- passwords -- */
 
+/** The reset code, in the customer's language. */
+export async function sendPasswordResetEmail(email: string, code: string, ttlSeconds: number) {
+  const [user] = await db
+    .select({ firstName: users.firstName, locale: users.locale })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${email.toLowerCase()}`)
+    .limit(1)
+  const { sendTemplate } = await import('../mailer')
+  return sendTemplate('auth_password_reset', {
+    to: email,
+    locale: user?.locale,
+    vars: { code, minutes: Math.round(ttlSeconds / 60), customer_name: user?.firstName ?? '' },
+  })
+}
+
+/** "Your password was changed" — the security notice after any change. */
+async function notifyPasswordChanged(userId: string) {
+  try {
+    const [user] = await db
+      .select({ email: users.email, firstName: users.firstName, locale: users.locale })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+    if (!user) return
+    const { sendTemplate } = await import('../mailer')
+    await sendTemplate('security_password_changed', { to: user.email, locale: user.locale, vars: { customer_name: user.firstName } })
+  } catch (err) {
+    console.error('[account] password-changed notice not sent', err)
+  }
+}
+
 export async function changePassword(
   userId: string,
   currentPassword: string,
@@ -277,6 +338,7 @@ export async function changePassword(
   /* Anyone who had a stolen session loses it. The current browser keeps
      working, so the customer is not logged out of the page they are on. */
   const revoked = await revokeAllSessionsForUser(userId, keepToken)
+  await notifyPasswordChanged(userId)
   return { otherSessionsRevoked: revoked }
 }
 
@@ -302,6 +364,7 @@ export async function resetPasswordWithOtp(email: string, code: string, newPassw
 
   const revoked = await revokeAllSessionsForUser(row.id)
   clearFailures(email.toLowerCase())
+  await notifyPasswordChanged(row.id)
   return { sessionsRevoked: revoked }
 }
 
@@ -320,12 +383,11 @@ export async function adminTriggerPasswordReset(customerId: string) {
   if (!row) return null
 
   const { issuePasswordResetOtp } = await import('./otp')
-  const { sendPasswordResetCode } = await import('../email')
   const { OTP_TTL_SECONDS } = await import('./otp')
 
   const issued = await issuePasswordResetOtp(row.email)
   if (!issued) return null
-  await sendPasswordResetCode(row.email, issued.code, OTP_TTL_SECONDS)
+  await sendPasswordResetEmail(row.email, issued.code, OTP_TTL_SECONDS)
   return { email: row.email }
 }
 

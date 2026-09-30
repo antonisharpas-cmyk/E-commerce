@@ -2,8 +2,7 @@
 import type { Metadata } from 'next'
 import { BRAND, isLocale, type Locale } from '@/config/brand'
 import { getTranslator } from '@/i18n/messages'
-import { listProducts } from '@/lib/catalog'
-import { productQuerySchema } from '@/lib/validation'
+import { loadListing } from '@/lib/listing'
 import { ProductListingView } from '@/components/ProductListingView'
 
 type Props = {
@@ -28,21 +27,16 @@ export default async function SearchPage({ params, searchParams }: Props) {
   const locale = (isLocale(raw) ? raw : BRAND.market.defaultLocale) as Locale
   const t = getTranslator(locale)
 
-  const query = productQuerySchema.parse({
-    ...sp,
-    sizes: typeof sp.sizes === 'string' ? sp.sizes.split(',').filter(Boolean) : sp.sizes,
-    locale,
-  })
-
-  const listing = await listProducts(query)
+  const { filters, listing } = await loadListing(sp, { kind: 'search' }, locale)
 
   return (
     <ProductListingView
       locale={locale}
-      title={query.q ? t('list.searchResultsFor', { q: query.q }) : t('nav.search')}
+      title={filters.q ? t('list.searchResultsFor', { q: filters.q }) : t('nav.search')}
       listing={listing}
-      query={query}
+      filters={filters}
       basePath={`/${locale}/search`}
+      ctx="search"
     />
   )
 }

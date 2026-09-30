@@ -58,8 +58,8 @@ async function wipe() {
 /** Registers and verifies in one step, returning the session token. */
 async function register(overrides: Partial<typeof BASE> = {}) {
   const input = registerSchema.parse({ ...BASE, ...overrides })
-  const { code } = await issueRegistrationOtp(input)
-  return completeRegistration(input.email, code)
+  const code = (await issueRegistrationOtp(input)).code!
+  return completeRegistration(input.email, code!)
 }
 
 beforeEach(wipe)
@@ -176,20 +176,33 @@ describe('registration requires a verified code', () => {
 /* ========================================================================== */
 
 describe('duplicate accounts are refused', () => {
-  it('refuses a second registration with the same email', async () => {
+  /* Anti-enumeration: a registered address is not refused out loud. It gets
+     the same answer a new one does, an email telling the owner, and an OTP
+     row that no code can ever complete. */
+  const pastCooldown = () =>
+    db.update(otpCodes).set({ createdAt: new Date(Date.now() - 5 * 60_000) })
+
+  it('does not create a second account for the same email — and does not say so', async () => {
     await register()
-    await expect(
-      issueRegistrationOtp(registerSchema.parse({ ...BASE, phone: '99000001' })),
-    ).rejects.toMatchObject({ code: 'EMAIL_TAKEN' })
+    await pastCooldown()
+    const again = await issueRegistrationOtp(registerSchema.parse({ ...BASE, phone: '99000001' }))
+    expect(again.code).toBeNull()
+    expect(again.existingAccount?.firstName).toBe(BASE.firstName)
+    expect(again.expiresAt).toBeInstanceOf(Date)
+    /* No six-digit code opens the decoy. */
+    await expect(completeRegistration(BASE.email, '123456')).rejects.toBeTruthy()
+    expect(await db.select().from(users)).toHaveLength(1)
   })
 
-  it('refuses a second registration with the same email in different case', async () => {
+  it('treats the same email in different case as the same account', async () => {
     await register()
-    await expect(
-      issueRegistrationOtp(
-        registerSchema.parse({ ...BASE, email: 'ELENA@Example.COM', phone: '99000002' }),
-      ),
-    ).rejects.toMatchObject({ code: 'EMAIL_TAKEN' })
+    await pastCooldown()
+    const again = await issueRegistrationOtp(
+      registerSchema.parse({ ...BASE, email: 'ELENA@Example.COM', phone: '99000002' }),
+    )
+    expect(again.code).toBeNull()
+    expect(again.existingAccount).toBeDefined()
+    expect(await db.select().from(users)).toHaveLength(1)
   })
 
   it('refuses a second registration with the same phone in another format', async () => {
@@ -215,8 +228,8 @@ describe('duplicate accounts are refused', () => {
     const codeB = (await issueRegistrationOtp(b)).code
 
     const results = await Promise.allSettled([
-      completeRegistration(a.email, codeA),
-      completeRegistration(b.email, codeB),
+      completeRegistration(a.email, codeA!),
+      completeRegistration(b.email, codeB!),
     ])
 
     const ok = results.filter((r) => r.status === 'fulfilled')
@@ -256,7 +269,7 @@ describe('OTP codes expire and limit attempts', () => {
 
   it('locks the code after the attempt limit', async () => {
     const input = registerSchema.parse(BASE)
-    const { code } = await issueRegistrationOtp(input)
+    const code = (await issueRegistrationOtp(input)).code!
 
     for (let i = 0; i < OTP_MAX_ATTEMPTS; i++) {
       await expect(verifyOtp(input.email, '000000', 'REGISTRATION')).rejects.toBeInstanceOf(OtpError)
@@ -270,7 +283,7 @@ describe('OTP codes expire and limit attempts', () => {
 
   it('rejects an expired code', async () => {
     const input = registerSchema.parse(BASE)
-    const { code } = await issueRegistrationOtp(input)
+    const code = (await issueRegistrationOtp(input)).code!
 
     await db.update(otpCodes).set({ expiresAt: new Date(Date.now() - 1000) })
 
@@ -281,7 +294,7 @@ describe('OTP codes expire and limit attempts', () => {
 
   it('allows a code to be used once only', async () => {
     const input = registerSchema.parse(BASE)
-    const { code } = await issueRegistrationOtp(input)
+    const code = (await issueRegistrationOtp(input)).code!
 
     await completeRegistration(input.email, code)
 
@@ -291,7 +304,7 @@ describe('OTP codes expire and limit attempts', () => {
 
   it('cannot be consumed twice by two simultaneous submissions', async () => {
     const input = registerSchema.parse({ ...BASE, email: 'once@example.com', phone: '99000020' })
-    const { code } = await issueRegistrationOtp(input)
+    const code = (await issueRegistrationOtp(input)).code!
 
     const results = await Promise.allSettled([
       completeRegistration(input.email, code),
@@ -310,8 +323,8 @@ describe('OTP codes expire and limit attempts', () => {
     await db.update(otpCodes).set({ createdAt: new Date(Date.now() - 120_000) })
     const second = await issueRegistrationOtp(input)
 
-    await expect(verifyOtp(input.email, first.code, 'REGISTRATION')).rejects.toBeInstanceOf(OtpError)
-    const ok = await verifyOtp(input.email, second.code, 'REGISTRATION')
+    await expect(verifyOtp(input.email, first.code!, 'REGISTRATION')).rejects.toBeInstanceOf(OtpError)
+    const ok = await verifyOtp(input.email, second.code!, 'REGISTRATION')
     expect(ok.email).toBe(input.email)
   })
 

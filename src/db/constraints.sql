@@ -268,3 +268,55 @@ BEGIN
     );
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------- homepage layout --
+-- A hand-picked homepage item is exactly one thing, and the right kind of
+-- thing: categories in the category section, products everywhere else. A
+-- product tile inside "Shop by category" would render as a broken link.
+
+ALTER TABLE homepage_section_items DROP CONSTRAINT IF EXISTS homepage_items_one_target;
+ALTER TABLE homepage_section_items ADD CONSTRAINT homepage_items_one_target
+  CHECK ((product_id IS NULL) <> (category_id IS NULL));
+
+ALTER TABLE homepage_section_items DROP CONSTRAINT IF EXISTS homepage_items_right_kind;
+ALTER TABLE homepage_section_items ADD CONSTRAINT homepage_items_right_kind
+  CHECK (
+    (section_key = 'categories' AND category_id IS NOT NULL)
+    OR (section_key <> 'categories' AND product_id IS NOT NULL)
+  );
+
+ALTER TABLE homepage_section_items DROP CONSTRAINT IF EXISTS homepage_items_position_non_negative;
+ALTER TABLE homepage_section_items ADD CONSTRAINT homepage_items_position_non_negative
+  CHECK (position >= 0);
+
+ALTER TABLE homepage_sections DROP CONSTRAINT IF EXISTS homepage_sections_position_non_negative;
+ALTER TABLE homepage_sections ADD CONSTRAINT homepage_sections_position_non_negative
+  CHECK (position >= 0);
+
+-- --------------------------------------------------------- customer service --
+-- A closed conversation always says when; an open one never claims to be
+-- closed. The inactivity sweep and the admin "Close" both rely on this.
+ALTER TABLE support_conversations DROP CONSTRAINT IF EXISTS support_closed_consistent;
+ALTER TABLE support_conversations ADD CONSTRAINT support_closed_consistent
+  CHECK ((status = 'CLOSED') = (closed_at IS NOT NULL));
+
+-- A message has something in it, and not a novel: the widget allows 2,000.
+ALTER TABLE support_messages DROP CONSTRAINT IF EXISTS support_message_length;
+ALTER TABLE support_messages ADD CONSTRAINT support_message_length
+  CHECK (char_length(body) BETWEEN 1 AND 2000);
+
+-- A conversation belongs to someone: an account, or a guest's cookie.
+ALTER TABLE support_conversations DROP CONSTRAINT IF EXISTS support_has_owner;
+ALTER TABLE support_conversations ADD CONSTRAINT support_has_owner
+  CHECK (user_id IS NOT NULL OR guest_token_hash IS NOT NULL);
+
+-- --------------------------------------------------------------- newsletter --
+-- Subscribed means confirmed. Nothing marketing is sent to anyone else, and
+-- this makes "subscribed without ever confirming" impossible to store.
+ALTER TABLE newsletter_subscribers DROP CONSTRAINT IF EXISTS newsletter_subscribed_confirmed;
+ALTER TABLE newsletter_subscribers ADD CONSTRAINT newsletter_subscribed_confirmed
+  CHECK (status <> 'SUBSCRIBED' OR (confirmed_at IS NOT NULL AND consent_at IS NOT NULL));
+
+ALTER TABLE newsletter_subscribers DROP CONSTRAINT IF EXISTS newsletter_unsubscribed_dated;
+ALTER TABLE newsletter_subscribers ADD CONSTRAINT newsletter_unsubscribed_dated
+  CHECK (status <> 'UNSUBSCRIBED' OR unsubscribed_at IS NOT NULL);

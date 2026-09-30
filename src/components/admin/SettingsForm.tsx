@@ -25,6 +25,8 @@ export type SettingsForm = {
   estimated_delivery_max_days: number
   homepage_promotions_enabled: boolean
   order_number_prefix: string
+  support_email: string
+  support_idle_minutes: number
 }
 
 function Row({
@@ -59,6 +61,8 @@ export function SettingsForm({ initial }: { initial: SettingsForm }) {
     deliveryMax: String(initial.estimated_delivery_max_days),
     promos: initial.homepage_promotions_enabled,
     prefix: initial.order_number_prefix,
+    supportEmail: initial.support_email,
+    idleMinutes: String(initial.support_idle_minutes),
   })
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -100,6 +104,12 @@ export function SettingsForm({ initial }: { initial: SettingsForm }) {
       return setError('Delivery days must be whole numbers, and the longest cannot be shorter than the quickest.')
     if (!/^[A-Z][A-Z0-9]{0,5}$/.test(form.prefix))
       return setError('The order prefix is 1–6 capital letters or digits, e.g. SF.')
+    const idle = Number(form.idleMinutes)
+    if (!Number.isInteger(idle) || idle < 2 || idle > 240)
+      return setError('Closing an idle conversation takes a whole number of minutes, 2 to 240.')
+    const supportEmail = form.supportEmail.trim().toLowerCase()
+    if (supportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail))
+      return setError('The customer-service email does not look like an email address.')
 
     setStatus('saving')
     try {
@@ -116,6 +126,8 @@ export function SettingsForm({ initial }: { initial: SettingsForm }) {
           estimated_delivery_max_days: dMax,
           homepage_promotions_enabled: form.promos,
           order_number_prefix: form.prefix,
+          support_email: supportEmail,
+          support_idle_minutes: idle,
         }),
       })
       const data = (await res.json()) as { ok?: boolean; message?: string }
@@ -208,6 +220,26 @@ export function SettingsForm({ initial }: { initial: SettingsForm }) {
           />
           <span>{form.promos ? 'Showing' : 'Hidden'}</span>
         </label>
+      </Row>
+
+      <Row
+        label="Customer-service email"
+        hint="Told whenever a customer starts a new conversation. Leave empty to use the shop's contact address."
+      >
+        <input
+          type="email"
+          value={form.supportEmail}
+          onChange={(e) => set('supportEmail', e.target.value)}
+          placeholder="support@yourshop.com"
+          className="w-full border border-line px-3.5 py-2.5 text-right outline-none focus:border-ink"
+        />
+      </Row>
+
+      <Row
+        label="Close a quiet conversation after"
+        hint="With no new message from either side for this long, a conversation closes itself and the customer is emailed the transcript. Minutes."
+      >
+        {numberField('idleMinutes')}
       </Row>
 
       <div className="flex items-center gap-4 py-6">

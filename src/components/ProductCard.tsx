@@ -22,18 +22,26 @@ export function ProductCard({
     <article className="group">
       <Link href={href} className="block">
         <div className="relative">
+          {/* Sold out stays clickable and looks deliberate, not broken: the
+              photo softens a little and a quiet band says why. */}
           <ProductImage
             src={image?.url ?? null}
             alt={tr(product.name, locale)}
             priority={priority}
+            className={product.soldOut ? 'opacity-80 saturate-[.85]' : ''}
           />
 
           <div className="absolute top-2 left-2 flex flex-col items-start gap-1">
-            {product.isOnSale && product.discountPercent > 0 && (
+            {product.isOnSale && product.discountPercent > 0 && !product.soldOut && (
               <Badge tone="sale">{t('card.saleBadge', { percent: product.discountPercent })}</Badge>
             )}
-            {!product.inStock && <Badge tone="muted">{t('card.soldOut')}</Badge>}
           </div>
+
+          {product.soldOut && (
+            <div className="absolute inset-x-0 bottom-0 bg-paper/85 py-2 text-center backdrop-blur-sm">
+              <span className="label text-ink">{t('card.soldOut')}</span>
+            </div>
+          )}
         </div>
       </Link>
 

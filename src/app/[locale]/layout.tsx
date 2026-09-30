@@ -14,6 +14,10 @@ import { getCategoryTree } from '@/lib/catalog'
 import { getCartCount, getOrCreateCart } from '@/lib/cart'
 import { getCurrentUser, readCartToken } from '@/lib/auth/session'
 import { Footer, Header } from '@/components/Header'
+import { SupportWidget } from '@/components/SupportWidget'
+
+/* "ATELIER" is the wordmark; in a sentence it reads "Atelier". */
+const serviceBrand = BRAND.name.charAt(0) + BRAND.name.slice(1).toLowerCase()
 import '../globals.css'
 
 /* Pre-render the three locale shells at build time. */
@@ -108,6 +112,11 @@ export default async function LocaleLayout({
         </main>
 
         <Footer locale={locale} />
+        {/* Room below the footer on a phone, so the Customer Service button
+            never sits on top of the last thing on the page. */}
+        <div aria-hidden className="h-20 sm:hidden" />
+
+        <SupportWidget locale={locale} brand={serviceBrand} />
       </body>
     </html>
   )

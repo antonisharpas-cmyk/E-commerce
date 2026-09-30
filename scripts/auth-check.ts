@@ -14,7 +14,7 @@ import './load-env'
 
 import { and, eq, sql } from 'drizzle-orm'
 import { db, pool } from '../src/db'
-import { cartItems, carts, otpCodes, users } from '../src/db/schema'
+import { cartItems, carts, emailJobs, emailLog, newsletterSubscribers, otpCodes, users } from '../src/db/schema'
 import { inventory, productVariants, products } from '../src/db/schema'
 
 const BASE = process.env.CHECK_BASE ?? 'http://localhost:3100'
@@ -146,6 +146,32 @@ async function main() {
   check('bad input is refused with field errors', bad.status === 422, bad.status)
   check('it says which fields', at(bad.body, 'fields') !== undefined)
 
+  /* --- the two passwords must match — checked by the server too --- */
+  const mismatch = await v.post('/api/auth/register', {
+    firstName: 'Test',
+    lastName: 'Person',
+    email: `check-${stamp}-mismatch@example.com`,
+    phone: `+35799${String(stamp + 7).slice(-6)}`,
+    password,
+    confirmPassword: `${password}x`,
+    locale: 'en',
+  })
+  check('mismatched passwords are refused', mismatch.status === 422, mismatch.status)
+  check(
+    'the error is on the confirm field',
+    at(mismatch.body, 'fields', 'properties', 'confirmPassword') !== undefined,
+    mismatch.body,
+  )
+  const noConfirm = await v.post('/api/auth/register', {
+    firstName: 'Test',
+    lastName: 'Person',
+    email: `check-${stamp}-noconfirm@example.com`,
+    phone: `+35799${String(stamp + 8).slice(-6)}`,
+    password,
+    locale: 'en',
+  })
+  check('a request without the confirmation is refused', noConfirm.status === 422, noConfirm.status)
+
   /* --- step one --- */
   const started = await v.post('/api/auth/register', {
     firstName: 'Test',
@@ -153,6 +179,7 @@ async function main() {
     email,
     phone,
     password,
+    confirmPassword: password,
     marketingConsent: true,
     locale: 'en',
   })
@@ -197,6 +224,11 @@ async function main() {
     .where(sql`lower(${users.email}) = ${email.toLowerCase()}`)
   check('the email is marked verified', created?.verified !== null)
   check('the role is CUSTOMER', created?.role === 'CUSTOMER', created?.role)
+  const [welcome] = await db
+    .select({ status: emailJobs.status })
+    .from(emailJobs)
+    .where(and(eq(emailJobs.userId, created.id), eq(emailJobs.automation, 'welcome')))
+  check('the "Welcome to Atelier" email is on its way', Boolean(welcome), welcome)
 
   if (variant) {
     const [cart] = await db
@@ -212,16 +244,40 @@ async function main() {
   check('the account page loads when signed in', account.status === 200, account.status)
 
   /* --- duplicates --- */
+  /* Anti-enumeration: an address that already has an account gets exactly
+     the answer a new one gets — and an email telling the owner, not a code.
+     The earlier code for this address is pushed past the resend cooldown
+     first, so the cooldown is not what answers. */
+  await db
+    .update(otpCodes)
+    .set({ createdAt: sql`now() - interval '5 minutes'` })
+    .where(sql`lower(${otpCodes.email}) = ${email.toLowerCase()}`)
   const dupEmail = await v.post('/api/auth/register', {
     firstName: 'Other',
     lastName: 'Person',
     email,
     phone: `+35799${String(stamp + 1).slice(-6)}`,
     password,
+    confirmPassword: password,
     locale: 'en',
   })
-  check('a duplicate email is refused', dupEmail.status === 409, dupEmail)
-  check('and says why', /already registered/i.test(String(str(at(dupEmail.body, 'message')))), dupEmail.body)
+  check('a registered email gets the same 200 as a new one', dupEmail.status === 200, dupEmail)
+  check(
+    'with the same fields',
+    JSON.stringify(Object.keys((dupEmail.body ?? {}) as object).sort()) ===
+      JSON.stringify(Object.keys((started.body ?? {}) as object).sort()),
+    dupEmail.body,
+  )
+  check('and no second account exists', (await userCount(email)) === 1)
+  const [notice] = await db
+    .select({ kind: emailLog.kind })
+    .from(emailLog)
+    .where(and(sql`lower(${emailLog.toEmail}) = ${email.toLowerCase()}`, eq(emailLog.kind, 'auth_existing_account')))
+    .limit(1)
+  check('the owner is emailed "you already have an account"', notice?.kind === 'auth_existing_account', notice)
+  const dupVerify = await v.post('/api/auth/verify', { email, code: '123456' })
+  check('no code can complete a second signup', dupVerify.status === 400 || dupVerify.status === 429, dupVerify.status)
+  check('still exactly one account', (await userCount(email)) === 1)
 
   const dupPhone = await v.post('/api/auth/register', {
     firstName: 'Other',
@@ -229,6 +285,7 @@ async function main() {
     email: `check-${stamp}-2@example.com`,
     phone,
     password,
+    confirmPassword: password,
     locale: 'en',
   })
   check('a duplicate phone number is refused', dupPhone.status === 409, dupPhone)
@@ -270,7 +327,18 @@ async function main() {
   check('the password is stored hashed', /^\$2[aby]\$/.test(stored?.hash ?? ''), stored?.hash?.slice(0, 7))
   check('the password does not appear anywhere in the response', !JSON.stringify(good.body ?? '').includes(password))
 
+  /* Ticking "email me" at registration subscribes — the code has already
+     proven the address, so there is no second confirmation step. */
+  const [subscriber] = await db
+    .select({ status: newsletterSubscribers.status, source: newsletterSubscribers.source })
+    .from(newsletterSubscribers)
+    .where(sql`lower(${newsletterSubscribers.email}) = ${email.toLowerCase()}`)
+  check('opting in at registration subscribes to new arrivals', subscriber?.status === 'SUBSCRIBED' && subscriber.source === 'registration', subscriber)
+
   /* tidy up */
+  await db.delete(newsletterSubscribers).where(sql`lower(${newsletterSubscribers.email}) like 'check-%@example.com'`)
+  await db.execute(sql`delete from marketing_consents where lower(email) like 'check-%@example.com'`)
+  await db.delete(emailJobs).where(sql`lower(${emailJobs.email}) like 'check-%@example.com'`)
   await db.delete(users).where(sql`lower(${users.email}) = ${email.toLowerCase()}`)
   await db.delete(otpCodes).where(sql`${otpCodes.email} like 'check-%@example.com'`)
 

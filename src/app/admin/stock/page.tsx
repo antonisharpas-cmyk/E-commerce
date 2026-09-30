@@ -1,115 +1,177 @@
 /* ============================================================================
- * Stock, every size in the shop on one screen.
+ * Stock: every variant (product × colour × size) as its own line.
  *
- * Grouped by product, because that is how a shop counts: you have the hoodies
- * in front of you, and you fill in all six sizes.
+ * Opens on "Needs attention" when anything does — sizes of products on sale
+ * to customers that are running low or out — so the first screen of the day
+ * is the to-do list, not 80 lines of things that are fine.
  * ========================================================================== */
 
 import Link from 'next/link'
-import { guardAdmin, listStock } from '@/lib/admin'
+import { guardAdmin } from '@/lib/admin'
+import {
+  catalogueFacets,
+  listStockRows,
+  parseStockFilters,
+  stockViewCounts,
+  type StockView,
+} from '@/lib/admin-catalog'
 import { getSettings } from '@/lib/settings'
-import { tField as tr } from '@/i18n/field'
+import { FilterBar } from '@/components/admin/FilterBar'
 import { StockEditor } from '@/components/admin/StockEditor'
-import { Empty, PageHead } from '@/components/admin/ui'
+import { Empty, PageHead, Pagination, withParams } from '@/components/admin/ui'
+import { db } from '@/db'
+import { products } from '@/db/schema'
+import { eq } from 'drizzle-orm'
 
 export const dynamic = 'force-dynamic'
 
-export default async function AdminStockPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ filter?: string }>
-}) {
+type SP = Record<string, string | string[] | undefined>
+
+const VIEWS: { key: StockView; label: string; hint: string }[] = [
+  { key: 'attention', label: 'Needs attention', hint: 'Low or out, on products customers can buy' },
+  { key: 'all', label: 'All', hint: 'Every size' },
+  { key: 'low', label: 'Low stock', hint: 'A few left' },
+  { key: 'sold_out', label: 'Sold out', hint: 'None available' },
+  { key: 'in_stock', label: 'In stock', hint: 'At least one available' },
+]
+
+export default async function AdminStockPage({ searchParams }: { searchParams: Promise<SP> }) {
   await guardAdmin('/admin/stock')
-  const { filter } = await searchParams
-  const lowOnly = filter === 'low'
+  const sp = await searchParams
+  const settings = await getSettings(['low_stock_threshold'])
+  const low = settings.low_stock_threshold
+  const filters = parseStockFilters(sp)
 
-  const settings = await getSettings(['low_stock_threshold', 'reservation_ttl_seconds'])
-  const rows = await listStock({ lowOnly, threshold: settings.low_stock_threshold })
-
-  /* Group into products, preserving the order the query returned. */
-  const groups = new Map<
-    string,
-    { productId: string; name: Record<string, string>; slug: string; category: Record<string, string>; lines: typeof rows }
-  >()
-  for (const row of rows) {
-    const existing = groups.get(row.productId)
-    if (existing) existing.lines.push(row)
-    else
-      groups.set(row.productId, {
-        productId: row.productId,
-        name: row.productName,
-        slug: row.productSlug,
-        category: row.categoryName,
-        lines: [row],
-      })
-  }
+  const counts = await stockViewCounts(filters, low)
+  /* No view chosen: start where the work is. */
+  const view: StockView = filters.view ?? (counts.attention > 0 ? 'attention' : 'all')
+  const [{ rows, total, page, pages }, facets, productName] = await Promise.all([
+    listStockRows({ ...filters, view }, low),
+    catalogueFacets(),
+    filters.product && /^[0-9a-f-]{36}$/i.test(filters.product)
+      ? db
+          .select({ name: products.name })
+          .from(products)
+          .where(eq(products.id, filters.product))
+          .then((r) => r[0]?.name.en ?? null)
+      : Promise.resolve(null),
+  ])
 
   return (
     <>
       <PageHead
         title="Stock"
         sub={
-          lowOnly
-            ? `Showing only sizes with ${settings.low_stock_threshold} or fewer available.`
-            : 'Type the number on the shelf and press Enter. It saves as you go.'
-        }
-        action={
-          <div className="flex gap-2">
-            <Link
-              href="/admin/stock"
-              className={`border px-4 py-2.5 label ${
-                lowOnly ? 'border-line text-muted hover:border-ink' : 'border-ink bg-ink text-paper'
-              }`}
-            >
-              Everything
-            </Link>
-            <Link
-              href="/admin/stock?filter=low"
-              className={`border px-4 py-2.5 label ${
-                lowOnly ? 'border-ink bg-ink text-paper' : 'border-line text-muted hover:border-ink'
-              }`}
-            >
-              Low & sold out
-            </Link>
-          </div>
+          <>
+            Click a number, type what is on the shelf, press <kbd className="font-mono">Enter</kbd>. It saves
+            and moves to the next line. Low means {low} or fewer available.
+          </>
         }
       />
 
-      {groups.size === 0 ? (
+      <div role="tablist" aria-label="Quick views" className="mb-5 flex flex-wrap gap-2">
+        {VIEWS.map((v) => {
+          const active = v.key === view
+          const n = counts[v.key]
+          return (
+            <Link
+              key={v.key}
+              role="tab"
+              aria-selected={active}
+              title={v.hint}
+              href={withParams('/admin/stock', sp, { view: v.key, page: null })}
+              className={`inline-flex items-center gap-2 border px-3.5 py-2.5 text-sm transition-colors ${
+                active ? 'border-ink bg-ink text-paper' : 'border-line bg-paper hover:border-ink'
+              }`}
+            >
+              {v.label}
+              <span
+                className={`rounded-full px-1.5 text-xs tabular-nums ${
+                  active
+                    ? 'bg-paper/20'
+                    : v.key === 'attention' && n > 0
+                      ? 'bg-sale/10 text-sale'
+                      : 'bg-paper-2 text-muted'
+                }`}
+              >
+                {n}
+              </span>
+            </Link>
+          )
+        })}
+      </div>
+
+      {productName && (
+        <p className="mb-4 flex items-center gap-3 text-sm">
+          <span>
+            Showing <strong>{productName}</strong> only.
+          </span>
+          <Link href={withParams('/admin/stock', sp, { product: null, page: null })} className="text-muted underline hover:text-ink">
+            Show every product
+          </Link>
+        </p>
+      )}
+
+      <FilterBar
+        searchPlaceholder="Search product, SKU, colour or size — e.g. “black”, “XS”, “leggings”"
+        keep={['view', 'product']}
+        menus={[
+          { param: 'dept', label: 'Department', options: facets.departments.map((d) => ({ value: d.slug, label: d.name })) },
+          {
+            param: 'cat',
+            label: 'Category',
+            options: facets.categories.map((c) => ({ value: c.id, label: c.name, group: c.department })),
+          },
+          {
+            param: 'colour',
+            label: 'Colour',
+            options: facets.colours.map((c) => ({ value: c.name, label: c.name, swatch: c.hex })),
+          },
+          { param: 'size', label: 'Size', options: facets.sizes.map((s) => ({ value: s, label: s })) },
+        ]}
+        sorts={[
+          { value: 'attention', label: 'Sold out, then low, first' },
+          { value: 'available-asc', label: 'Available, fewest first' },
+          { value: 'available-desc', label: 'Available, most first' },
+          { value: 'product', label: 'Product' },
+          { value: 'category', label: 'Category' },
+          { value: 'colour', label: 'Colour' },
+          { value: 'size', label: 'Size' },
+        ]}
+      />
+
+      {rows.length === 0 ? (
         <Empty>
-          {lowOnly
-            ? 'Nothing is low. Every size has stock.'
-            : 'No stock rows yet — seed the catalogue first.'}
+          {view === 'attention'
+            ? 'Nothing needs attention. Every size customers can buy has more than a few left.'
+            : view === 'sold_out'
+              ? 'No sizes are sold out.'
+              : view === 'low'
+                ? 'Nothing is running low.'
+                : 'No sizes match these filters.'}
         </Empty>
       ) : (
-        <div className="space-y-10">
-          {[...groups.values()].map((group) => (
-            <section key={group.productId}>
-              <div className="mb-3 flex flex-wrap items-baseline gap-x-3">
-                <h2 className="text-lg font-semibold tracking-tight">{tr(group.name, 'en')}</h2>
-                <span className="label text-muted">{tr(group.category, 'en')}</span>
-                <Link
-                  href={`/en/products/${group.slug}`}
-                  className="ml-auto label text-muted hover:text-ink"
-                >
-                  View in shop
-                </Link>
-              </div>
-              <StockEditor
-                lines={group.lines.map((l) => ({
-                  variantId: l.variantId,
-                  sku: l.sku,
-                  size: l.size,
-                  onHand: l.onHand,
-                  reserved: l.reserved,
-                  available: l.available,
-                }))}
-                lowStockThreshold={settings.low_stock_threshold}
-              />
-            </section>
-          ))}
-        </div>
+        <StockEditor
+          /* A new list (other view, filter or page) starts fresh rather than
+             carrying the last list's "Saved ✓" marks. */
+          key={JSON.stringify({ ...filters, view })}
+          lines={rows}
+          lowStockThreshold={low}
+        />
       )}
+
+      <Pagination
+        page={page}
+        pages={pages}
+        total={total}
+        noun={['size', 'sizes']}
+        href={(p) => withParams('/admin/stock', sp, { page: p, view })}
+      />
+
+      <p className="mt-6 text-xs text-muted">
+        <strong className="font-medium">Held</strong> units are in live customer bags and come back by themselves if
+        the customer does not check out. You cannot set the shelf count below what is held.
+      </p>
     </>
   )
 }

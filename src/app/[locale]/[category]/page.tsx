@@ -2,8 +2,8 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import { BRAND, isLocale, type Locale } from '@/config/brand'
-import { getCategoryBySlug, listProducts, t as tr } from '@/lib/catalog'
-import { productQuerySchema } from '@/lib/validation'
+import { getCategoryBySlug, t as tr } from '@/lib/catalog'
+import { loadListing } from '@/lib/listing'
 import { ProductListingView } from '@/components/ProductListingView'
 
 type Props = {
@@ -33,22 +33,16 @@ export default async function CategoryPage({ params, searchParams }: Props) {
   const category = await getCategoryBySlug(slug)
   if (!category) notFound()
 
-  const query = productQuerySchema.parse({
-    ...sp,
-    sizes: typeof sp.sizes === 'string' ? sp.sizes.split(',').filter(Boolean) : sp.sizes,
-    category: slug,
-    locale,
-  })
-
-  const listing = await listProducts(query)
+  const { filters, listing } = await loadListing(sp, { category: slug }, locale)
 
   return (
     <ProductListingView
       locale={locale}
       title={tr(category.name, locale)}
       listing={listing}
-      query={query}
+      filters={filters}
       basePath={`/${locale}/${slug}`}
+      ctx={slug}
     />
   )
 }

@@ -36,7 +36,7 @@ import type { Locale } from '@/config/brand'
 export class CartError extends Error {
   constructor(
     message: string,
-    readonly code: 'NO_SUCH_VARIANT' | 'OUT_OF_STOCK' | 'INSUFFICIENT_STOCK' | 'INVALID_QUANTITY',
+    readonly code: 'NO_SUCH_VARIANT' | 'OUT_OF_STOCK' | 'INSUFFICIENT_STOCK' | 'INVALID_QUANTITY' | 'SOLD_OUT',
     readonly available?: number,
   ) {
     super(message)
@@ -178,6 +178,7 @@ export async function addToCart(
           : 'This item is no longer available.',
       NO_SUCH_VARIANT: 'That size is no longer sold.',
       INVALID_QUANTITY: 'Choose a quantity between 1 and 20.',
+      SOLD_OUT: 'This piece is sold out right now.',
     }
     throw new CartError(
       messages[reservation.reason] ?? 'This item is not available.',
@@ -195,8 +196,24 @@ export async function addToCart(
     })
 
   await db.update(carts).set({ updatedAt: new Date() }).where(eq(carts.id, cartId))
+  await noteBagChange(cartId)
 
   return { cartId, reservation }
+}
+
+/**
+ * Tell the automations the bag changed — (re)schedules or cancels the
+ * abandoned-bag reminder (lib/automations.ts). A reminder is never worth
+ * failing a customer's click over, so errors are logged and swallowed.
+ * Imported lazily: automations reads carts, so a static import would be a cycle.
+ */
+async function noteBagChange(cartId: string) {
+  try {
+    const { bagChanged } = await import('@/lib/automations')
+    await bagChanged(cartId)
+  } catch (err) {
+    console.error('[cart] abandoned-bag scheduling failed', err)
+  }
 }
 
 export async function removeFromCart(cartId: string, variantId: string): Promise<void> {
@@ -205,11 +222,13 @@ export async function removeFromCart(cartId: string, variantId: string): Promise
     .where(and(eq(cartItems.cartId, cartId), eq(cartItems.variantId, variantId)))
   await releaseForCartVariant(cartId, variantId)
   await db.update(carts).set({ updatedAt: new Date() }).where(eq(carts.id, cartId))
+  await noteBagChange(cartId)
 }
 
 export async function clearCart(cartId: string): Promise<void> {
   await db.delete(cartItems).where(eq(cartItems.cartId, cartId))
   await releaseCart(cartId)
+  await noteBagChange(cartId)
 }
 
 export async function setCartPromoCode(cartId: string, promoCodeId: string | null): Promise<void> {

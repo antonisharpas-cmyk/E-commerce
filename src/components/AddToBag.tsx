@@ -17,6 +17,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Locale } from '@/config/brand'
 import { getTranslator } from '@/i18n/messages'
+import { announceBagCount } from '@/lib/bag-events'
 
 export type VariantOption = {
   id: string
@@ -35,10 +36,14 @@ export function AddToBag({
   locale,
   variants,
   reservationMinutes,
+  soldOut = false,
 }: {
   locale: Locale
   variants: VariantOption[]
   reservationMinutes: number
+  /** The owner has marked the whole product sold out. The server refuses it
+   *  anyway; this just says so before anyone tries. */
+  soldOut?: boolean
 }) {
   const t = getTranslator(locale)
   const router = useRouter()
@@ -102,7 +107,8 @@ export function AddToBag({
       }
 
       setMessage({ tone: 'ok', text: t('pdp.added') })
-      /* Refresh server components so the header bag count updates. */
+      /* The header badge moves now; the refresh brings the rest along. */
+      announceBagCount(data.cartCount)
       startTransition(() => router.refresh())
     } catch {
       setMessage({ tone: 'error', text: t('err.network') })
@@ -111,7 +117,7 @@ export function AddToBag({
     }
   }
 
-  const anyInStock = forColour.some((v) => availabilityOf(v) > 0)
+  const anyInStock = !soldOut && forColour.some((v) => availabilityOf(v) > 0)
 
   return (
     <div>
@@ -120,11 +126,14 @@ export function AddToBag({
         <fieldset className="mb-6">
           <legend className="label mb-2.5">
             {t('pdp.colour')}
-            {selected?.colorName && (
-              <span className="ml-2 font-normal normal-case tracking-normal text-muted">
-                {selected.colorName[locale] ?? selected.colorName.en}
-              </span>
-            )}
+            {(() => {
+              const name = colours.find((c) => c.hex === colour)?.name
+              return name ? (
+                <span className="ml-2 font-normal normal-case tracking-normal text-muted">
+                  {name[locale] ?? name.en}
+                </span>
+              ) : null
+            })()}
           </legend>
           <div className="flex gap-2">
             {colours.map((c) => (
@@ -157,22 +166,22 @@ export function AddToBag({
         <div className="flex flex-wrap gap-2">
           {forColour.map((v) => {
             const available = availabilityOf(v)
-            const soldOut = available <= 0
+            const sizeGone = soldOut || available <= 0
             const active = variantId === v.id
             return (
               <button
                 key={v.id}
                 type="button"
-                disabled={soldOut}
+                disabled={sizeGone}
                 onClick={() => {
                   setVariantId(v.id)
                   setQuantity(1)
                   setMessage(null)
                 }}
                 aria-pressed={active}
-                title={soldOut ? t('pdp.outOfStockSize', { size: v.size }) : undefined}
+                title={sizeGone ? t('pdp.outOfStockSize', { size: v.size }) : undefined}
                 className={`relative min-w-14 border px-3 py-3 text-sm transition-colors ${
-                  soldOut
+                  sizeGone
                     ? 'cursor-not-allowed border-line text-line-strong'
                     : active
                       ? 'border-ink bg-ink text-paper'
@@ -180,7 +189,7 @@ export function AddToBag({
                 }`}
               >
                 {v.size}
-                {soldOut && (
+                {sizeGone && (
                   <span
                     aria-hidden
                     className="pointer-events-none absolute inset-0 grid place-items-center"
@@ -253,6 +262,20 @@ export function AddToBag({
             ? t('pdp.adding')
             : t('pdp.addToBag')}
       </button>
+
+      {!anyInStock && (
+        <div className="mt-4 border border-line bg-paper-2 px-4 py-3.5">
+          <p className="label">{t('pdp.soldOutTitle')}</p>
+          <p className="mt-1.5 text-sm text-ink-soft">{t('pdp.soldOutBody')}</p>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('support:open'))}
+            className="mt-2.5 text-sm underline underline-offset-4 hover:text-ink-soft"
+          >
+            {t('pdp.askRestock')}
+          </button>
+        </div>
+      )}
 
       {message && (
         <p

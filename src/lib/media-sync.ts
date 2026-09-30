@@ -31,13 +31,16 @@ export async function syncMedia(db: Db): Promise<number> {
     if (!product) continue
 
     const images = await db
-      .select({ id: productImages.id, url: productImages.url, position: productImages.position })
+      .select({ id: productImages.id, url: productImages.url })
       .from(productImages)
       .where(eq(productImages.productId, product.id))
 
     for (const image of images) {
       if (!image.url.startsWith(`/products/${slug}`)) continue
-      const want = artUrl(slug, image.position === 1)
+      /* Front or back by the file's own name, never by position: the owner
+         may have dragged the back photo first, and that order is theirs. */
+      const isBack = image.url.startsWith(`/products/${slug}-back`)
+      const want = artUrl(slug, isBack)
       if (image.url !== want) {
         await db.update(productImages).set({ url: want }).where(eq(productImages.id, image.id))
         changed++

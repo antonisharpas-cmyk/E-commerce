@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { SearchIcon } from './HeaderIcons'
 import { useRouter } from 'next/navigation'
 import type { Locale } from '@/config/brand'
 
@@ -90,21 +91,24 @@ export function SearchBox({
 
   return (
     <div ref={boxRef} className="relative">
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="px-3 py-2 label text-ink-soft hover:text-ink"
-        >
-          {label}
-        </button>
-      )}
+      {/* On a phone the icon stays put and the field drops below the header;
+          on a wide screen the field takes the icon's place. */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={label}
+        aria-expanded={open}
+        title={label}
+        className={`grid h-10 w-10 place-items-center hover:text-ink-soft ${open ? 'md:hidden' : ''}`}
+      >
+        <SearchIcon />
+      </button>
 
       {open && (
         <form
           action={`/${locale}/search`}
           method="get"
-          className="flex items-center gap-2"
+          className="absolute right-0 top-full z-50 mt-3 flex w-[min(92vw,26rem)] items-center gap-2 border border-line bg-paper p-2 shadow-xl md:static md:mt-0 md:w-auto md:border-0 md:p-0 md:shadow-none"
           onSubmit={(e) => {
             e.preventDefault()
             if (term.trim()) router.push(`/${locale}/search?q=${encodeURIComponent(term.trim())}`)
@@ -118,7 +122,7 @@ export function SearchBox({
             placeholder={placeholder}
             aria-label={label}
             autoFocus
-            className="h-10 w-48 border border-line bg-paper px-3 text-sm outline-none focus:border-ink md:w-72"
+            className="h-10 min-w-0 flex-1 border border-line bg-paper px-3 text-sm outline-none focus:border-ink md:w-72 md:flex-none"
           />
           <button type="submit" className="label px-2 py-2 hover:text-ink-soft">
             {label}
@@ -127,7 +131,7 @@ export function SearchBox({
       )}
 
       {open && term.trim().length >= 2 && (
-        <div className="absolute top-full right-0 z-50 mt-1 w-[min(92vw,26rem)] border border-line bg-paper shadow-xl">
+        <div className="absolute top-full right-0 z-50 mt-[4.25rem] w-[min(92vw,26rem)] md:mt-1 border border-line bg-paper shadow-xl">
           {loading && items.length === 0 && (
             <p className="px-4 py-3 text-sm text-muted">…</p>
           )}

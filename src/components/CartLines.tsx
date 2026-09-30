@@ -15,6 +15,7 @@ import type { Locale } from '@/config/brand'
 import { getTranslator } from '@/i18n/messages'
 import { tField as tr } from '@/i18n/field'
 import type { CartView } from '@/lib/cart'
+import { announceBagCount } from '@/lib/bag-events'
 
 export function CartLines({ locale, view }: { locale: Locale; view: CartView }) {
   const t = getTranslator(locale)
@@ -38,9 +39,11 @@ export function CartLines({ locale, view }: { locale: Locale; view: CartView }) 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ variantId, quantity }),
       })
-      const data = (await res.json()) as { ok?: boolean; message?: string }
+      const data = (await res.json()) as { ok?: boolean; message?: string; cartCount?: number }
       if (!res.ok || !data.ok) {
         setError(data.message ?? t('err.generic'))
+      } else {
+        announceBagCount(data.cartCount)
       }
       startTransition(() => router.refresh())
     } catch {

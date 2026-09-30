@@ -24,6 +24,7 @@ import Link from 'next/link'
 import type { Locale } from '@/config/brand'
 import { tField as tr } from '@/i18n/field'
 import type { ProductCard } from '@/lib/catalog'
+import { getTranslator } from '@/i18n/messages'
 
 export function ProductMarquee({
   products,
@@ -38,6 +39,7 @@ export function ProductMarquee({
   reverse?: boolean
 }) {
   if (products.length === 0) return null
+  const soldOutLabel = getTranslator(locale)('card.soldOut')
 
   const money = (c: number) =>
     new Intl.NumberFormat(locale === 'el' ? 'el-GR' : locale === 'ru' ? 'ru-RU' : 'en-IE', {
@@ -67,9 +69,14 @@ export function ProductMarquee({
               className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
             />
           )}
-          {product.discountPercent > 0 && (
+          {product.discountPercent > 0 && !product.soldOut && (
             <span className="absolute left-0 top-0 bg-sale px-2.5 py-1 label text-paper">
               −{product.discountPercent}%
+            </span>
+          )}
+          {product.soldOut && (
+            <span className="absolute inset-x-0 bottom-0 bg-paper/85 py-1.5 text-center label backdrop-blur-sm">
+              {soldOutLabel}
             </span>
           )}
         </div>

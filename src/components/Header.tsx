@@ -5,9 +5,13 @@ import { t as tr } from '@/lib/catalog'
 import type { CategoryNode } from '@/lib/catalog'
 import { SearchBox } from './SearchBox'
 import { MobileNav } from './MobileNav'
+import { HeaderBag, UserIcon } from './HeaderIcons'
 
-/* Server component. The two interactive pieces — search and the mobile drawer —
-   are separate client components, so the header itself ships no JavaScript. */
+/* Server component. The interactive pieces — search, the bag count and the
+   mobile drawer — are small client components.
+
+   Desktop:  Logo · Shop (the category menu) · Search · Account · Bag
+   Mobile:   Logo · Search · Account · Bag · Menu */
 
 export function Header({
   locale,
@@ -25,16 +29,16 @@ export function Header({
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-paper/95 backdrop-blur">
-      {/* announcement strip — free delivery threshold comes from settings */}
+      {/* announcement strip — the newsletter invitation, as a real link */}
       <div className="border-b border-line bg-ink text-paper">
         <div className="container-x flex h-9 items-center justify-center">
-          <p className="label truncate">{t('footer.newsletter')}</p>
+          <Link href={`${base}/newsletter`} className="label truncate hover:underline underline-offset-4">
+            {t('footer.newsletter')} <span aria-hidden>→</span>
+          </Link>
         </div>
       </div>
 
       <div className="container-x flex h-16 items-center gap-4">
-        <MobileNav locale={locale} categories={categories} />
-
         <Link href={base} className="shrink-0 text-lg font-semibold tracking-[0.18em]">
           {BRAND.name}
         </Link>
@@ -43,10 +47,7 @@ export function Header({
         <nav className="ml-6 hidden items-stretch gap-7 lg:flex" aria-label="Main">
           {categories.map((root) => (
             <div key={root.id} className="group relative flex items-center">
-              <Link
-                href={`${base}/${root.slug}`}
-                className="label py-5 hover:text-ink-soft"
-              >
+              <Link href={`${base}/${root.slug}`} className="label py-5 hover:text-ink-soft">
                 {tr(root.name, locale)}
               </Link>
 
@@ -64,10 +65,7 @@ export function Header({
                       </li>
                     ))}
                     <li className="mt-1 border-t border-line pt-1">
-                      <Link
-                        href={`${base}/${root.slug}`}
-                        className="block px-4 py-2 label hover:bg-paper-2"
-                      >
+                      <Link href={`${base}/${root.slug}`} className="block px-4 py-2 label hover:bg-paper-2">
                         {t('nav.allIn', { category: tr(root.name, locale) })}
                       </Link>
                     </li>
@@ -78,8 +76,12 @@ export function Header({
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-1 sm:gap-2">
+        <div className="ml-auto flex items-center gap-0.5 sm:gap-1">
           <SearchBox locale={locale} placeholder={t('nav.searchPlaceholder')} label={t('nav.search')} />
+
+          <Link href={`${base}/contact`} className="hidden px-2 py-1 label text-muted hover:text-ink lg:inline">
+            {t('nav.help')}
+          </Link>
 
           {/* language switcher — a plain form so it works without JS */}
           <div className="hidden items-center gap-1 sm:flex" role="group" aria-label={t('nav.language')}>
@@ -100,24 +102,17 @@ export function Header({
 
           <Link
             href={signedIn ? `${base}/account` : `${base}/sign-in`}
-            className="hidden px-3 py-2 label text-ink-soft hover:text-ink sm:block"
+            aria-label={signedIn ? t('nav.account') : t('auth.signIn')}
+            title={signedIn ? t('nav.account') : t('auth.signIn')}
+            className="relative grid h-10 w-10 place-items-center hover:text-ink-soft"
           >
-            {signedIn ? t('nav.account') : t('auth.signIn')}
+            <UserIcon />
+            {signedIn && <span aria-hidden className="absolute bottom-2 right-2 h-1.5 w-1.5 rounded-full bg-ink" />}
           </Link>
 
-          <Link
-            href={`${base}/cart`}
-            className="relative flex items-center gap-2 px-3 py-2 label hover:text-ink-soft"
-          >
-            {t('nav.bag')}
-            <span
-              className={`grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold ${
-                cartCount > 0 ? 'bg-ink text-paper' : 'bg-paper-2 text-muted'
-              }`}
-            >
-              {cartCount}
-            </span>
-          </Link>
+          <HeaderBag locale={locale} initialCount={cartCount} />
+
+          <MobileNav locale={locale} categories={categories} />
         </div>
       </div>
     </header>
@@ -132,16 +127,17 @@ export function Footer({ locale }: { locale: Locale }) {
     {
       title: t('footer.help'),
       links: [
+        /* Order tracking and terms join this list when those pages exist —
+           a footer link to a 404 is worse than no link. */
         [t('footer.contact'), `${base}/contact`],
-        [t('footer.trackOrder'), `${base}/track-order`],
-        [t('footer.delivery'), `${base}/delivery`],
-        [t('footer.returns'), `${base}/returns`],
+        [t('footer.delivery'), `${base}/contact#delivery`],
+        [t('footer.returns'), `${base}/contact#returns`],
       ],
     },
     {
       title: t('footer.about'),
       links: [
-        [t('footer.terms'), `${base}/terms`],
+        [t('footer.newsletter'), `${base}/newsletter`],
         [t('footer.privacy'), `${base}/privacy`],
       ],
     },
@@ -152,9 +148,7 @@ export function Footer({ locale }: { locale: Locale }) {
       <div className="container-x grid gap-10 py-12 md:grid-cols-4">
         <div className="md:col-span-2">
           <p className="text-lg font-semibold tracking-[0.18em]">{BRAND.name}</p>
-          <p className="mt-3 max-w-sm text-sm text-muted">
-            {BRAND.contact.addressLines.join(', ')}
-          </p>
+          <p className="mt-3 max-w-sm text-sm text-muted">{BRAND.contact.addressLines.join(', ')}</p>
           <p className="mt-2 text-sm text-muted">
             {BRAND.contact.email} · {BRAND.contact.phone}
           </p>

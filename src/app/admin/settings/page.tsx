@@ -20,6 +20,8 @@ export default async function AdminSettingsPage() {
     'estimated_delivery_max_days',
     'homepage_promotions_enabled',
     'order_number_prefix',
+    'support_email',
+    'support_idle_minutes',
   ])
 
   return (

@@ -11,11 +11,13 @@
  * ========================================================================== */
 
 import { notFound, redirect } from 'next/navigation'
-import { and, count, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '@/db'
 import {
   categories,
+  emailLog,
   inventory,
+  productImages,
   productVariants,
   products,
   promoCodes,
@@ -25,6 +27,7 @@ import {
 import { AuthError, getCurrentUser, type SessionUser } from '@/lib/auth/session'
 import type { UserRole } from '@/db/schema'
 import { compareSizes } from '@/lib/sizes'
+import { listProductsByIds } from '@/lib/catalog'
 
 /* ------------------------------------------------------------------ guard -- */
 
@@ -165,65 +168,59 @@ export async function getOverview(lowStockThreshold: number): Promise<AdminOverv
   }
 }
 
+/* ------------------------------------------------------------- today -- */
+
+/** Midnight in the shop's own time zone — "today" means today in Cyprus,
+ *  not in UTC, or the numbers would flip over at 2 or 3 in the morning. */
+const SHOP_DAY_START = sql`(date_trunc('day', now() at time zone 'Europe/Nicosia') at time zone 'Europe/Nicosia')`
+
+export type TodayNumbers = {
+  orders: number
+  revenueCents: number
+  newCustomers: number
+  newSubscribers: number
+  failedEmails7d: { kind: string; toEmail: string; subject: string; createdAt: Date; error: string | null }[]
+}
+
+export async function getToday(): Promise<TodayNumbers> {
+  const [res, failed] = await Promise.all([
+    db.execute<{ orders: number; revenue: number; customers: number; subscribers: number }>(sql`
+      select
+        (select count(*)::int from orders where created_at >= ${SHOP_DAY_START}) as orders,
+        (select coalesce(sum(total_cents), 0)::int from orders
+          where created_at >= ${SHOP_DAY_START}
+            and status in ('PAID', 'PROCESSING', 'READY_FOR_PICKUP', 'SHIPPED', 'DELIVERED')) as revenue,
+        (select count(*)::int from users where role = 'CUSTOMER' and created_at >= ${SHOP_DAY_START}) as customers,
+        (select count(*)::int from newsletter_subscribers
+          where status = 'SUBSCRIBED' and confirmed_at >= ${SHOP_DAY_START}) as subscribers
+    `),
+    db
+      .select({
+        kind: emailLog.kind,
+        toEmail: emailLog.toEmail,
+        subject: emailLog.subject,
+        createdAt: emailLog.createdAt,
+        error: emailLog.error,
+      })
+      .from(emailLog)
+      .where(and(eq(emailLog.status, 'failed'), sql`${emailLog.createdAt} > now() - interval '7 days'`))
+      .orderBy(desc(emailLog.createdAt))
+      .limit(10),
+  ])
+  const r = res.rows[0]
+  return {
+    orders: Number(r?.orders ?? 0),
+    revenueCents: Number(r?.revenue ?? 0),
+    newCustomers: Number(r?.customers ?? 0),
+    newSubscribers: Number(r?.subscribers ?? 0),
+    failedEmails7d: failed,
+  }
+}
+
 /* -------------------------------------------------------------- products -- */
 
-export type AdminProductRow = {
-  id: string
-  slug: string
-  name: Record<string, string>
-  categoryName: Record<string, string>
-  priceCents: number
-  salePriceCents: number | null
-  isActive: boolean
-  variants: number
-  available: number
-}
-
-export async function listAdminProducts(search?: string): Promise<AdminProductRow[]> {
-  const where = search?.trim()
-    ? sql`(${products.slug} ilike ${'%' + search.trim() + '%'}
-           or ${products.name}->>'en' ilike ${'%' + search.trim() + '%'})`
-    : undefined
-
-  return db
-    .select({
-      id: products.id,
-      slug: products.slug,
-      name: products.name,
-      categoryName: categories.name,
-      priceCents: products.priceCents,
-      salePriceCents: products.salePriceCents,
-      isActive: products.isActive,
-      variants: sql<number>`count(${productVariants.id})`.mapWith(Number),
-      available: sql<number>`coalesce(sum(${inventory.onHand} - ${inventory.reserved}), 0)`.mapWith(
-        Number,
-      ),
-    })
-    .from(products)
-    .innerJoin(categories, eq(categories.id, products.categoryId))
-    .leftJoin(productVariants, eq(productVariants.productId, products.id))
-    .leftJoin(inventory, eq(inventory.variantId, productVariants.id))
-    .where(where)
-    .groupBy(products.id, categories.id)
-    .orderBy(desc(products.createdAt))
-}
-
-export type AdminProductDetail = AdminProductRow & {
-  summary: Record<string, string> | null
-  description: Record<string, string> | null
-  currency: string
-  variants: never
-  rows: {
-    variantId: string
-    sku: string
-    size: string
-    colorName: Record<string, string> | null
-    onHand: number
-    reserved: number
-    available: number
-    isActive: boolean
-  }[]
-}
+/* The Products list itself lives in lib/admin-catalog.ts (search, filters,
+   pagination). This is the single-product read for the editor. */
 
 export async function getAdminProduct(id: string) {
   const [row] = await db
@@ -237,7 +234,10 @@ export async function getAdminProduct(id: string) {
       priceCents: products.priceCents,
       salePriceCents: products.salePriceCents,
       isActive: products.isActive,
+      availability: products.availability,
       currency: products.currency,
+      categoryId: products.categoryId,
+      createdAt: products.createdAt,
     })
     .from(products)
     .innerJoin(categories, eq(categories.id, products.categoryId))
@@ -275,49 +275,101 @@ export async function getAdminProduct(id: string) {
   }
 }
 
-/* ----------------------------------------------------------------- stock -- */
+/* The Stock screen reads lib/admin-catalog.ts (one line per variant). */
 
-export type StockRow = {
-  variantId: string
-  sku: string
-  size: string
-  productId: string
-  productName: Record<string, string>
-  productSlug: string
-  categoryName: Record<string, string>
-  onHand: number
-  reserved: number
-  available: number
+/* ------------------------------------------------------ homepage & photos -- */
+
+export type PickerProduct = {
+  id: string
+  name: string
+  category: string
+  image: string | null
+  isActive: boolean
+  isOnSale: boolean
 }
 
-export async function listStock(opts: { lowOnly?: boolean; threshold?: number } = {}) {
-  const conditions = []
-  if (opts.lowOnly) {
-    conditions.push(
-      sql`${inventory.onHand} - ${inventory.reserved} <= ${opts.threshold ?? 3}`,
-    )
-  }
-
+/**
+ * Every product, as the homepage picker shows it: a thumbnail, and the two
+ * facts that decide whether picking it will actually show anything — whether
+ * it is live, and (for "On sale") whether it is currently reduced. The second
+ * comes from the storefront's own pricing, not from a column, so it counts
+ * promotions as well as sale prices.
+ */
+export async function listPickerProducts(): Promise<PickerProduct[]> {
   const rows = await db
     .select({
-      variantId: productVariants.id,
-      sku: productVariants.sku,
-      size: productVariants.size,
-      productId: products.id,
-      productName: products.name,
-      productSlug: products.slug,
+      id: products.id,
+      name: products.name,
       categoryName: categories.name,
-      onHand: inventory.onHand,
-      reserved: inventory.reserved,
-      available: sql<number>`${inventory.onHand} - ${inventory.reserved}`.mapWith(Number),
-      position: productVariants.position,
+      isActive: products.isActive,
     })
-    .from(inventory)
-    .innerJoin(productVariants, eq(productVariants.id, inventory.variantId))
-    .innerJoin(products, eq(products.id, productVariants.productId))
+    .from(products)
     .innerJoin(categories, eq(categories.id, products.categoryId))
-    .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(products.slug, productVariants.position)
+    .orderBy(desc(products.createdAt))
 
-  return rows
+  const ids = rows.map((r) => r.id)
+  const [images, reduced] = await Promise.all([
+    ids.length
+      ? db
+          .select({ productId: productImages.productId, url: productImages.url, position: productImages.position })
+          .from(productImages)
+          .where(inArray(productImages.productId, ids))
+          .orderBy(asc(productImages.position))
+      : Promise.resolve([]),
+    listProductsByIds(ids, { onSaleOnly: true }),
+  ])
+  const firstImage = new Map<string, string>()
+  for (const img of images) if (!firstImage.has(img.productId)) firstImage.set(img.productId, img.url)
+  const onSale = new Set(reduced.map((c) => c.id))
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name.en ?? Object.values(r.name)[0] ?? '',
+    category: r.categoryName.en ?? '',
+    image: firstImage.get(r.id) ?? null,
+    isActive: r.isActive,
+    isOnSale: onSale.has(r.id),
+  }))
+}
+
+export type AdminProductImage = { id: string; url: string; position: number }
+
+export async function getProductImages(productId: string): Promise<AdminProductImage[]> {
+  return db
+    .select({ id: productImages.id, url: productImages.url, position: productImages.position })
+    .from(productImages)
+    .where(eq(productImages.productId, productId))
+    .orderBy(asc(productImages.position), asc(productImages.createdAt))
+}
+
+/**
+ * Put a product's photos in this order. The first is the one on every card
+ * and at the top of the product page; the second is the one a card fades to
+ * on hover.
+ *
+ * `ids` must be exactly this product's photos — every one, once. Anything
+ * else is refused: a partial list would leave two photos claiming the same
+ * place, and a foreign id would move another product's picture.
+ */
+export async function reorderProductImages(productId: string, ids: string[]): Promise<void> {
+  const current = await getProductImages(productId)
+  const have = new Set(current.map((i) => i.id))
+  if (ids.length !== current.length || new Set(ids).size !== ids.length || !ids.every((id) => have.has(id))) {
+    throw new AdminError('Send every photo of this product exactly once.')
+  }
+  await db.transaction(async (tx) => {
+    for (const [position, id] of ids.entries()) {
+      await tx
+        .update(productImages)
+        .set({ position })
+        .where(and(eq(productImages.id, id), eq(productImages.productId, productId)))
+    }
+  })
+}
+
+export class AdminError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AdminError'
+  }
 }

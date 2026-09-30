@@ -81,7 +81,7 @@ export default async function ProductPage({ params }: Props) {
       lowPrice: (Math.min(...product.variants.map((v) => v.finalCents)) / 100).toFixed(2),
       highPrice: (Math.max(...product.variants.map((v) => v.finalCents)) / 100).toFixed(2),
       offerCount: product.variants.length,
-      availability: product.inStock
+      availability: !product.soldOut
         ? 'https://schema.org/InStock'
         : 'https://schema.org/OutOfStock',
     },
@@ -162,6 +162,7 @@ export default async function ProductPage({ params }: Props) {
               locale={locale}
               variants={product.variants}
               reservationMinutes={Math.round(ttlSeconds / 60)}
+              soldOut={product.soldOut}
             />
           </div>
 

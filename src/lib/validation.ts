@@ -147,6 +147,16 @@ export const registerSchema = z.object({
 
 export type RegisterInput = z.infer<typeof registerSchema>
 
+/** What the registration form sends: the details plus the password typed a
+ *  second time. Checked here as well as in the browser — a request that skips
+ *  the form still has to match. */
+export const registerRequestSchema = registerSchema
+  .extend({ confirmPassword: z.string().max(200) })
+  .refine((d) => d.password === d.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'The passwords don’t match.',
+  })
+
 export const verifyOtpSchema = z.object({
   email: emailSchema,
   code: z
@@ -254,6 +264,13 @@ export const productQuerySchema = z.object({
   subcategory: slugSchema.optional(),
   q: z.string().trim().max(120).optional(),
   sizes: z.array(z.string().trim().max(24)).max(20).optional(),
+  /* Colour keys ("black", "washed-black"). Any of them — OR within the group. */
+  colours: z.array(z.string().trim().max(60).regex(/^[a-z0-9-]+$/)).max(30).optional(),
+  /* Subcategory slugs inside `category`, or "department/slug" on pages
+     that span departments. Any of them. */
+  categories: z.array(z.string().trim().max(120).regex(/^[a-z0-9-]+(\/[a-z0-9-]+)?$/)).max(30).optional(),
+  /* A department slug, on pages that span departments. */
+  department: slugSchema.optional(),
   minPrice: centsSchema.optional(),
   maxPrice: centsSchema.optional(),
   onSale: z.coerce.boolean().optional(),

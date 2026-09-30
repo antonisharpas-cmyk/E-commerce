@@ -19,7 +19,7 @@
  *    ability to verify someone else's address.
  * ========================================================================== */
 
-import { createHash, randomInt, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm'
 import { db } from '@/db'
 import { otpCodes, users } from '@/db/schema'
@@ -136,15 +136,33 @@ async function assertSendAllowed(email: string, purpose: OtpPurpose) {
 /**
  * Issue a registration code. Returns the plaintext code so the caller can mail
  * it — it is never returned to the browser and never logged in production.
+ *
+ * An email that already has an account gets NO code and no error either: the
+ * answer to the browser is the same "check your inbox", and the address's
+ * owner is emailed "you already have an account — sign in" instead
+ * (`existingAccount` tells the caller which email to send). So the form
+ * cannot be used to find out who shops here. The same limits, the same
+ * password hashing, and an OTP row of the same shape (whose code can never
+ * match) keep the two paths indistinguishable from outside, in timing too.
+ *
+ * A phone number already on another account is still refused openly: the
+ * person has to change what they typed, and a phone number alone does not
+ * identify an email address.
  */
 export async function issueRegistrationOtp(input: RegisterInput): Promise<{
-  code: string
+  code: string | null
   expiresAt: Date
+  existingAccount?: { firstName: string; locale: string }
 }> {
-  await assertIdentityAvailable(input.email, input.phone)
+  const [existing] = await db
+    .select({ firstName: users.firstName, locale: users.locale, phone: users.phone })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${input.email.toLowerCase()}`)
+    .limit(1)
+  if (!existing) await assertIdentityAvailable(input.email, input.phone)
   await assertSendAllowed(input.email, 'REGISTRATION')
 
-  const code = generateCode()
+  const code = existing ? null : generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_SECONDS * 1000)
 
   /* Supersede any outstanding code for this address so only the newest works —
@@ -161,29 +179,36 @@ export async function issueRegistrationOtp(input: RegisterInput): Promise<{
     )
 
   /* The password is hashed before it is parked on the OTP row — a pending
-     registration must not store a plaintext password even briefly. */
+     registration must not store a plaintext password even briefly. (Hashed
+     for an existing address too, and thrown away: same time either way.) */
   const { hashPassword } = await import('./password')
   const passwordHash = await hashPassword(input.password)
 
   await db.insert(otpCodes).values({
     email: input.email,
     purpose: 'REGISTRATION',
-    codeHash: hashCode(code),
+    /* For an existing address: the hash of 32 random bytes, which no
+       six-digit code can ever match. */
+    codeHash: hashCode(code ?? randomBytes(32).toString('hex')),
     maxAttempts: OTP_MAX_ATTEMPTS,
     expiresAt,
-    pendingPayload: {
-      firstName: input.firstName,
-      lastName: input.lastName,
-      email: input.email,
-      phone: input.phone,
-      passwordHash,
-      marketingConsent: input.marketingConsent,
-      address: input.address ?? null,
-      locale: input.locale,
-    },
+    pendingPayload: existing
+      ? null
+      : {
+          firstName: input.firstName,
+          lastName: input.lastName,
+          email: input.email,
+          phone: input.phone,
+          passwordHash,
+          marketingConsent: input.marketingConsent,
+          address: input.address ?? null,
+          locale: input.locale,
+        },
   })
 
-  return { code, expiresAt }
+  return existing
+    ? { code: null, expiresAt, existingAccount: { firstName: existing.firstName, locale: existing.locale } }
+    : { code: code!, expiresAt }
 }
 
 export async function issuePasswordResetOtp(

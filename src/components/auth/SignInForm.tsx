@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation'
 import type { Locale } from '@/config/brand'
 import { getTranslator } from '@/i18n/messages'
 import { AuthCard, Field, FormError } from './Field'
+import { PasswordField } from './PasswordField'
 import { button } from '@/components/ui'
 
 export function SignInForm({ locale, next }: { locale: Locale; next?: string }) {
@@ -67,10 +68,11 @@ export function SignInForm({ locale, next }: { locale: Locale; next?: string }) 
           onChange={(e) => setEmail(e.target.value)}
         />
 
-        <Field
+        <PasswordField
           label={t('auth.password')}
           name="password"
-          type="password"
+          showLabel={t('auth.showPassword')}
+          hideLabel={t('auth.hidePassword')}
           autoComplete="current-password"
           required
           value={password}

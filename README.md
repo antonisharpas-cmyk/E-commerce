@@ -3,6 +3,8 @@
 A fashion e-commerce platform: Next.js 16 (App Router) + TypeScript + Tailwind,
 PostgreSQL via Drizzle, three languages (EN / EL / RU).
 
+Everything that has been built, and what has not, is in **[OVERVIEW.md](OVERVIEW.md)**.
+
 Running the shop day to day — signing in as an admin, stock, prices, settings —
 is in **[ADMIN.md](ADMIN.md)**. The photographs the shop is waiting for, and
 exactly what to name them, are in **[IMAGES.md](IMAGES.md)**.
@@ -63,8 +65,8 @@ promo codes (one expired) — every state the UI has to handle.
 ## Verifying it
 
 ```bash
-npm test          # 141 unit/integration tests against a real Postgres
-npm run check     # 123 checks against a running dev server, over HTTP
+npm test          # 223 unit/integration tests against a real Postgres
+npm run check     # ~225 checks against a running dev server, over HTTP
 npm run lint
 npm run build
 ```
@@ -84,8 +86,10 @@ The HTTP checks are the ones worth reading:
 | `check:concurrency` | Two — then ten — visitors race for the last unit. Exactly one wins, the losers get a readable 409, nothing is ever oversold. |
 | `check:promo` | A promo code is validated, priced and stored server-side; a forged discount in the request body is ignored; refusals explain themselves. |
 | `check:views` | Views are counted per person (a refresh does not inflate them), and nobody can read anyone else's history. |
-| `check:auth` | No account exists until the emailed code is verified; duplicate email or phone refused; a wrong password and an unknown address are indistinguishable; the guest bag follows the customer into their account — including the last item in stock. |
-| `check:admin` | A stranger and a signed-in customer are both turned away from every admin page and every admin API, and their write attempts change nothing; an admin gets in; stock cannot be set below what live carts hold; a settings change reaches the storefront on the next request. |
+| `check:auth` | No account exists until the emailed code is verified; the two passwords must match (checked by the server too); a registered email gets the same answer as a new one plus an "existing account" email, and no second account can be made; duplicate phone refused; the welcome email is scheduled on verification; a wrong password and an unknown address are indistinguishable; the guest bag follows the customer into their account — including the last item in stock. |
+| `check:admin` | A stranger and a signed-in customer are both turned away from every admin page and every admin API, and their write attempts change nothing; an admin gets in; stock cannot be set below what live carts hold; a settings change reaches the storefront on the next request; *Sold out* and *Hidden* stop a purchase even through the API. |
+| `check:filters` | A filtered URL renders the filtered products on the server (so it survives refresh and sharing); `/api/products/count` agrees with the page for the same URL; OR within a group, AND between; price is what the customer pays; a page offers only options that make sense there; junk in the URL is ignored. |
+| `check:service` | Customer Service: one guest cannot read or write another's conversation even with its id; replies carry no staff identity; closing sends one transcript; the inbox is closed to non-admins; a guest must give name and email and gets the automatic first reply. Marketing & Emails: closed to non-admins; required emails cannot be switched off; unknown variables refused; a test email goes only to the configured test address; typed HTML stays text. Newsletter: no consent, no sign-up; a repeat sign-up gets the same answer; confirm and unsubscribe only by signed link, including a mail client's one-click unsubscribe. |
 
 `npm run db:check` is the one to reach for first when something will not start:
 it walks configuration → connection → schema → data and stops at the first
@@ -104,6 +108,16 @@ share.
 | `src/lib/sizes.ts` | Sizes sort as XS→XXL, not alphabetically. Every list of sizes goes through it. |
 | `public/products/` | Product imagery. `npm run art` draws each garment — a hoodie with a hood, a slip dress with a bias hem — and **never overwrites a photograph**: drop `<slug>.jpg` in here, re-run `npm run art && npm run db:seed`, and the photo is used instead. That is the upgrade path from placeholder to real photography, with no code change. |
 | `src/components/ProductMarquee.tsx` | The moving strip on the homepage. The list is rendered twice and the track travels exactly half its width, so the loop is seamless; one CSS animation, no per-frame JavaScript. Pauses on hover and on keyboard focus, and does not animate at all under `prefers-reduced-motion`. |
+| `src/lib/listing-filters.ts` | The listing URL ⇄ filters, used by the server page and the browser alike, so both read `?size=M&colour=black&minPrice=40` the same way. No imports; prices in whole euros. |
+| `src/lib/catalog.ts` → `buildListing` | Filters as named groups: OR within a group, AND between, and size/colour/stock checked on the same variant. Facets list what exists on the page, each counted with every other group applied. |
+| `src/lib/pricing.ts` → `effectivePriceSql` | `resolvePrices` restated as SQL, so filtering and sorting by price use the number on the card; a test compares the two across product, category and fixed promotions. |
+| `src/lib/admin-catalog.ts` | The admin Products and Stock lists. Every search, filter and sort runs in PostgreSQL with bound parameters, and only one page comes back. *Status* (the owner's choice: available / sold out / hidden) and *stock* (what the shelf says) are kept as separate questions. |
+| `src/lib/support.ts` | Customer Service. Ownership by account or by a hashed http-only cookie token; conversations created only by a first message; the inactivity close measured from the last message; one `UPDATE … WHERE status = 'OPEN'` deciding who closed it, so the transcript is sent exactly once. |
+| `src/lib/newsletter.ts` | The mailing list. Double opt-in with HMAC-signed links (`JWT_SECRET`), a consent ledger, answers that never reveal who is subscribed, List-Unsubscribe headers, and one mailing at a time behind an advisory lock. |
+| `src/lib/email-templates.ts` | Every email's words (EN/EL/RU), its category, whether it is required, its timing and the variables it may use. Rendering is pure: values are escaped, unknown `{{…}}` are dropped, a paragraph whose variables are empty is left out, no code ever runs. |
+| `src/lib/mailer.ts` | `sendTemplate(key, …)`: the owner's edits over the built-in words, the recipient's language with English fallback, the right footer, and a refusal to send marketing without an unsubscribe link. Required templates cannot be switched off. |
+| `src/lib/automations.ts` | The event system. Every automated email is an `email_jobs` row (the event log) with its reason; the worker claims due jobs with `FOR UPDATE SKIP LOCKED` and re-checks consent, the frequency limit, purchases and availability at send time. Dedupe keys make each order email happen once. New triggers are a handler and a template. |
+| `src/instrumentation.ts` | Starts the 30-second automation tick (idle chats, due emails, scheduled campaigns) when the server starts (Node runtime only). `POST /api/cron/automations` with `CRON_SECRET` does the same on hosts without a long-running process. |
 | `src/i18n/messages.ts` | All UI copy, with plural forms selected by `Intl.PluralRules` — Greek "1 προϊόν", Russian one/few/many. |
 
 ## Where it stands
@@ -115,6 +129,21 @@ codes, promotions, product views feeding "most viewed" and "recently viewed",
 localisation and locale negotiation.
 
 Registration with email verification, sign-in, sign-out and a basic account
-page are built and verified. Still to come: Stripe checkout and webhooks, orders and
-order tracking, transactional email, customer accounts, the admin panel, then
-the SEO/performance/security passes.
+page are built and verified; so are the admin panel (overview, homepage,
+products with search and filters, per-variant stock, sold-out / hidden status,
+settings), Customer Service chat with its admin inbox and emails, and the
+double opt-in newsletter, and Marketing & Emails (editable automated emails in
+three languages, abandoned-bag reminders, scheduled campaigns, email activity
+and the event log; order emails are wired and wait for checkout). Still to
+come: Stripe checkout and webhooks, orders and order tracking, then the
+SEO/performance/security passes. `OVERVIEW.md` has the full list.
+
+### Environment variables added with Customer Service and the newsletter
+
+| Variable | Needed | What for |
+| --- | --- | --- |
+| `JWT_SECRET` | in production | signs newsletter confirm/unsubscribe links; 16+ characters |
+| `PUBLIC_SITE_URL` | in production | absolute links in emails (confirm, unsubscribe, the admin link) |
+| `EMAIL_API_KEY`, `EMAIL_FROM` | to send real email | without them every email goes to the server log and `email_log` |
+| `CRON_SECRET` | optional | enables `POST /api/cron/automations` (and the older `support-sweep`) for serverless hosts |
+| `AUTOMATIONS=off` | optional | turns off the built-in 30-second automation tick (when cron does it); `SUPPORT_SWEEP=off` still works |
